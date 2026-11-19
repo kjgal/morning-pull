@@ -4,7 +4,7 @@ import {evaluateEspresso,coachGear,updateCoachAnswer} from '../dist/espresso-coa
 import {coachScreen,nextBaseline} from '../dist/coach-ui.js';
 import {brewView} from '../dist/ui.js';
 import {quickBrew,bagEdit,home} from '../dist/views.js';
-import {targetYield} from '../dist/core.js';
+import {targetYield,shotClock,pourAnimation} from '../dist/core.js';
 
 const gear={machine:'Pump espresso machine',basket:'Single-wall / unpressurized',grinder:'Adjustable espresso grinder',
   scale:'Yes',stop:'Can stop at a chosen yield',temperature:'Adjustable',distribution:'Needle distribution tool'};
@@ -108,7 +108,7 @@ test('guided, saved legacy drafts, and quick entry points use the same pouring v
   }
   for(const markup of [brewView({...draft,step:5,timer:{startedAt:100}},state),brewView({...draft,step:5,pouring:true},state),quickBrew(true)]){
     assert.match(markup,/pour-scene[\s\S]*Ready to taste/);
-    assert.doesNotMatch(markup,/Shot time|Elapsed time|cue-status|Record results/);
+    assert.match(markup,/pour-scene[\s\S]*Start timer[\s\S]*Skip timer[\s\S]*mp-cup/);
   }
   assert.match(quickBrew(false),/Start brewing/);
 });
@@ -217,7 +217,8 @@ test('weighing the next cup carries instructions into brewing before showing a f
   const test={title:advice.title,instruction:advice.change,keep:advice.keep,report:advice.report};
   const recipe={gear,planned,test};
   for(const markup of [brewView({...recipe,step:3},state),brewView({...recipe,step:5,pouring:true},state)]){
-    assert.match(markup,/Weigh the next cup[\s\S]*Place a scale under the cup[\s\S]*36 g/);
+    assert.match(markup,/Weigh the next cup[\s\S]*Place a scale under the cup/);
+    assert.match(markup,/36 g/);
     assert.doesNotMatch(markup,/Report what happened|Sources|Elapsed time/);
   }
   const report=coachScreen({origin:recipe,screen:'test-result',actual:{},gear,answers:{}},state,null,null,false);
@@ -234,4 +235,32 @@ test('dashboard always offers a fresh shot and continues only unfinished drafts'
     assert.match(markup,/Skip for now/);
   }
   assert.doesNotMatch(home({equipment:{},equipmentSetupSkipped:true}),/Skip for now/);
+});
+
+test('countdown is optional, stops at the recorded elapsed time, and continues past zero',()=>{
+  assert.equal(shotClock(null,30,1000),null);
+  assert.deepEqual(shotClock({startedAt:1000},30,13000),{running:true,elapsed:12,remaining:18,reached:false});
+  assert.deepEqual(shotClock({startedAt:1000,stoppedAt:13000},30,50000),{running:false,elapsed:12,remaining:18,reached:false});
+  assert.deepEqual(shotClock({startedAt:1000},30,33500),{running:true,elapsed:32.5,remaining:0,reached:true});
+});
+
+test('coach uses a confirmed timer measurement independently of the time and yield targets',()=>{
+  const previous={actual:{...actual,timeSource:'timer'},gear,planned};
+  const timed={...actual,seconds:48,timeSource:'timer'};
+  const outcome=shot('Sour','Fast',{actual:timed,previous,planned:{...planned,targetSeconds:30,ratio:1.8}});
+  assert.equal(outcome.key,'interruption');
+  assert.match(outcome.body,/48 s versus 29 s/);
+  const withoutMeasurement=shot('Sour','Fast',{actual:{...actual,seconds:48},previous});
+  assert.equal(withoutMeasurement.key,'time');
+});
+
+test('the illustrated stream follows the same timer phase and ends at zero or early stop',()=>{
+  const draft={decorativeStartedAt:1000};
+  assert.equal(pourAnimation({},null,1000),null);
+  assert.deepEqual(pourAnimation(draft,null,2250),{mode:'decorative',elapsed:1.25});
+  assert.equal(pourAnimation(draft,null,5000),null);
+  const clock={startedAt:1000};
+  assert.deepEqual(pourAnimation(draft,shotClock(clock,30,17250),17250),{mode:'timed',elapsed:16.25});
+  assert.equal(pourAnimation(draft,shotClock(clock,30,31000),31000),null);
+  assert.equal(pourAnimation(draft,shotClock({...clock,stoppedAt:3000},30,3200),3200),null);
 });

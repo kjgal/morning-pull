@@ -1,4 +1,4 @@
-import {emptyState,positive,bagDateError,storageDateError,TIMING,EQUIPMENT,dateValue} from './core.js';
+import {emptyState,positive,bagDateError,storageDateError,TIMING,EQUIPMENT,dateValue,validTimerTarget,measuredShotTime} from './core.js';
 import {recipeURL,recipeUnits} from './recipe-import.js';
 const validOriginal = value => {
   if(value===undefined||value==='') return true;
@@ -21,9 +21,9 @@ const validBag = b => record(b) && ['id','name','roaster','roastLevel','roast','
 const validGear = gear => record(gear) && Object.entries(EQUIPMENT).every(([key,values])=>gear[key]===undefined || values.includes(gear[key])) &&
   (gear.ratedDose===undefined || nullable(gear.ratedDose,60));
 const validPlan = p => record(p) && nullable(p.dose,60) && positive(p.ratio,10) && Object.hasOwn(TIMING,p.timing) &&
-  (p.temperature===null || (Number.isFinite(p.temperature) && p.temperature>=70 && p.temperature<=105)) && nullable(p.preInfusion,90) && ['grind','prep','heat'].every(k=>p[k]===undefined || (text(p[k]) && p[k].length<=250));
+  (p.temperature===null || (Number.isFinite(p.temperature) && p.temperature>=70 && p.temperature<=105)) && nullable(p.preInfusion,90) && (p.targetSeconds==null||validTimerTarget(p.targetSeconds)) && ['grind','prep','heat'].every(k=>p[k]===undefined || (text(p[k]) && p[k].length<=250));
 const validActual = a => record(a) && nullable(a.dose,60) && nullable(a.yieldG,500) && nullable(a.seconds,3600) &&
-  nullable(a.tds,100) && Object.hasOwn(TIMING,a.timing) && (a.timeSource===undefined||a.timeSource==='manual');
+  nullable(a.tds,100) && Object.hasOwn(TIMING,a.timing) && (a.timeSource===undefined||measuredShotTime(a));
 const validSnapshot = s => record(s) && ['name','roaster','roast','opened','method','portionName','portionMethod','frozen','thawed'].every(k=>text(s[k]));
 const validShot = s => record(s) && ['id','createdAt','updatedAt','day','bagId','portionId','parentId','goal','note','change','detail'].every(k=>text(s[k])) &&
   dateValue(s.day)!==null && validSnapshot(s.bag) && validGear(s.gear) && validPlan(s.planned) && validActual(s.actual) &&
@@ -32,7 +32,7 @@ const validShot = s => record(s) && ['id','createdAt','updatedAt','day','bagId',
 const validRecipe = r => record(r) && text(r.id) && text(r.name) && Boolean(r.name.trim()) && ['syrup','drink'].includes(r.kind) &&
   Array.isArray(r.items) && r.items.length>0 && r.items.every(i=>record(i) && text(i.name) && Boolean(i.name.trim()) && (i.amount===null?r.imported===true&&i.unit==='':positive(i.amount,100000)&&recipeUnits.includes(i.unit))) &&
   validOriginal(r.originalURL) && (r.yieldText===undefined||text(r.yieldText)) &&
-  strings(r.steps) && r.steps.length>0 && typeof r.favorite==='boolean';
+  (r.cupSteps===undefined||strings(r.cupSteps)) && strings(r.steps) && r.steps.length>0 && typeof r.favorite==='boolean';
 const unique = rows => new Set(rows.map(row=>row.id)).size===rows.length;
 
 export function importData(value) {

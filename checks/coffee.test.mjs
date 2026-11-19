@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 import {ratioOf,targetYield,extraction,scaleItems,age,storageDateError,bagDateError,startingRecipe,prepSteps,labelSuggestions,emptyState} from '../dist/core.js';
-import {SYRUPS,drinks} from '../dist/recipes.js';
+import {SYRUPS,drinks,brewedDrinkChoices,drinkAdditions} from '../dist/recipes.js';
 import {importData} from '../dist/storage.js';
 
 test('espresso uses mass ratios, and extraction needs measured TDS',()=>{
@@ -113,4 +113,54 @@ test('service worker precaches core and serves the navigation fallback without i
   network=async()=>({status:503});
   events.fetch({request:{method:'GET',mode:'navigate',url:scope},respondWith:p=>{outcome=p;}});
   assert.equal(await outcome,scope);
+});
+
+test('puck prep follows the selected machine routine, current dose, and tools',()=>{
+  const gear={machine:'Pump espresso machine',scale:'Yes',distribution:'Needle distribution tool',tamper:'Yes'};
+  assert.deepEqual(prepSteps(gear,{dose:20}),[
+    ['warmup','Warm up the machine','Let your machine reach brewing temperature.'],
+    ['dose','Weigh 20 g of coffee.'],
+    ['wdt','Use your WDT needle tool to break up clumps.'],
+    ['tamp','Tamp level.']
+  ]);
+  assert.equal(prepSteps({...gear,warmup:'Warming flush recommended'},{dose:19})[0][2],
+    'Run a warming flush before adding coffee.');
+  assert.equal(prepSteps(gear,{dose:19})[1][1],'Weigh 19 g of coffee.');
+  assert.deepEqual(prepSteps({...gear,machine:'Automatic / bean-to-cup'}).map(([key])=>key),['warmup','load']);
+  assert.equal(startingRecipe(gear,null,'Balanced').dose,18);
+});
+
+test('milk preferences filter no-milk ideas and use the selected milk in creamy drinks',()=>{
+  const options={temp:'Iced',pantry:['water','ice','milk','espresso']};
+  const noMilk=drinks({...options,milk:'No milk'});
+  assert.ok(noMilk.some(r=>r.name==='Iced Americano'));
+  assert.ok(noMilk.every(r=>r.items.every(i=>i.key!=='milk')));
+  assert.ok(drinks({...options,milk:'No preference'}).some(r=>r.id==='latte'));
+  assert.equal(drinks({...options,milk:'Oat milk'}).find(r=>r.id==='latte').items.find(i=>i.key==='milk').name,'Oat milk');
+});
+
+test('brewed drinks list compatible favorites first without requiring espresso in the pantry',()=>{
+  const options={temp:'Iced',milk:'No milk',pantry:['water','ice']};
+  const americano=drinks(options).find(r=>r.id==='americano');
+  const saved={...americano,id:'saved-americano',favorite:true};
+  const {favorites,suggestions}=brewedDrinkChoices([saved],options);
+  assert.deepEqual(favorites.map(r=>r.id),['saved-americano']);
+  assert.ok(!favorites[0].missing.length);
+  assert.ok(!suggestions.some(r=>r.name==='Iced Americano'));
+  assert.deepEqual(drinkAdditions(favorites[0]).filter(i=>!i.optional).map(i=>i.name),['Water','Ice']);
+  assert.match(favorites[0].cupSteps[0],/Add the cold water and ice to your espresso/);
+  const toggled=brewedDrinkChoices([{...saved,favorite:false}],options);
+  assert.deepEqual(toggled.suggestions.filter(r=>r.name==='Iced Americano').map(r=>r.id),['saved-americano']);
+});
+
+test('legacy dairy-free preference also checks sauces, including optional toppings',()=>{
+  const drink=(id,name)=>({id,kind:'drink',favorite:true,items:[
+    {name:'Brewed espresso'},{name:'Oat milk'},{name,optional:true}
+  ]});
+  const old={milk:'No preference',diet:'Dairy-free',temp:'Iced',pantry:['milk','ice','water']};
+  const saved=[drink('dairy','Whipped cream'),drink('unknown','Caramel sauce'),drink('plant','Dairy-free caramel sauce')];
+  assert.deepEqual(brewedDrinkChoices(saved,old).favorites.map(r=>r.id),['plant']);
+  assert.deepEqual(brewedDrinkChoices(saved,{...old,milk:'No milk'}).favorites,[]);
+  const ideas=drinks({...old,otherSyrup:'Milk chocolate sauce'});
+  assert.ok(ideas.every(r=>r.items.every(i=>i.name!=='Milk chocolate sauce')));
 });

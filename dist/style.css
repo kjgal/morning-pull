@@ -123,8 +123,12 @@ input[type=checkbox]::after{content:"";width:9px;height:6px;transform:translateY
 input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
 input[type=checkbox]:checked::after{visibility:visible}
 .pour-scene{
- position:relative;isolation:isolate;min-width:0;width:100%;height:clamp(135px,36vw,218px);overflow:hidden;
+ position:relative;isolation:isolate;min-width:0;width:100%;overflow:hidden;
+ background:#3e2a47;
  margin:12px 0;border:1px solid var(--border);border-radius:7px;
+}
+.pour-art{
+ position:relative;min-width:0;height:clamp(150px,40vw,250px);overflow:hidden;
  background:linear-gradient(0deg,#38253e 0 11%,#653a48 11% 17%,#73444d 17% 24%,#b27160 24% 26%,#694351 26% 29%,transparent 29%),
  repeating-linear-gradient(90deg,#3e2a47 0 20px,#422b47 20px 40px);
 }
@@ -173,22 +177,23 @@ input[type=checkbox]:checked::after{visibility:visible}
  background:repeating-linear-gradient(0deg,#c17d4f 0 5px,#e5a161 5px 8px,#9e583d 8px 12px);
  visibility:hidden;
 }
-.is-pouring .mp-stream{
+.pour-art[data-pour-mode]:not([data-pour-mode=""]) .mp-stream{
  visibility:visible;
- animation:mp-flow-motion .5s steps(6,end) 8,mp-stop-flow 4s steps(1,end) forwards;
+ animation:mp-flow-motion .5s steps(6,end) infinite;
+ animation-delay:var(--pour-offset,0s);
 }
-.is-pouring .mp-stream::after{
+.pour-art[data-pour-mode]:not([data-pour-mode=""]) .mp-stream::after{
  content:"";position:absolute;bottom:0;left:-3px;width:11px;height:2px;background:#e5a161;
- animation:mp-ripple-motion .5s steps(2,end) 8 alternate;
+ animation:mp-ripple-motion .5s steps(2,end) infinite alternate;
+ animation-delay:var(--pour-offset,0s);
 }
 @keyframes mp-flow-motion{to{background-position:0 12px}}
-@keyframes mp-stop-flow{to{visibility:hidden}}
 @keyframes mp-ripple-motion{to{opacity:.35}}
 @media(prefers-reduced-motion:reduce){
- .mp-stream{display:none}
+ .pour-art[data-pour-mode]:not([data-pour-mode=""]) .mp-stream,
+ .pour-art[data-pour-mode]:not([data-pour-mode=""]) .mp-stream::after{animation:none}
 }
 .pour-panel{max-width:730px;margin-inline:auto}
-.pour-scene{height:clamp(165px,42vw,290px)}
 .pour-scene .mp-window{position:absolute;border:6px solid #775371;box-shadow:3px 3px #251e38;background:linear-gradient(90deg,transparent 47%,#724f6b 47% 54%,transparent 54%),linear-gradient(transparent 46%,#724f6b 46% 53%,transparent 53%),linear-gradient(0deg,#4b416c 0 28%,#80507d 28% 36%,#b47191 36% 54%,#715481 54% 100%)}
 .pour-scene .mp-window::after{content:"";position:absolute;inset:15% auto auto 14%;width:12px;height:12px;background:#f0aa82;clip-path:polygon(20% 0,80% 0,80% 20%,100% 20%,100% 80%,80% 80%,80% 100%,20% 100%,20% 80%,0 80%,0 20%,20% 20%)}
 .pour-target{color:var(--accent);font-weight:800;font-size:1.25rem}
@@ -224,3 +229,30 @@ input[type=checkbox]:checked::after{visibility:visible}
 .photo-picker:focus-within{outline:3px solid var(--mint);outline-offset:3px}
 .photo-picker input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
 .ingredient-review{grid-column:1/-1;margin:0}
+
+.prep-list{min-width:0;margin-block:14px}
+.prep-list label{
+ display:flex;align-items:flex-start;gap:8px;min-width:0;min-height:44px;
+ padding:9px 6px;border-bottom:1px solid var(--border);overflow-wrap:anywhere;cursor:pointer
+}
+.prep-list input{margin-top:3px}
+.prep-list span{min-width:0}
+.prep-list small{display:block}
+.brew-clock{
+ position:relative;z-index:4;min-width:0;max-width:100%;padding:10px;
+ background:#261e34;border-bottom:1px solid var(--border);text-align:center;
+ font-variant-numeric:tabular-nums;overflow-wrap:anywhere
+}
+.clock-display,.clock-actions{
+ display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:6px 10px;min-width:0;
+}
+.clock-display > *, .clock-actions > *{min-width:0;max-width:100%}
+.clock-display strong{color:var(--accent);font-size:clamp(1.3rem,5vw,1.8rem)}
+.clock-display span{color:var(--muted);font-size:.9rem}
+.clock-actions{margin-top:6px}
+.timer-cue{margin:6px 0 0;color:var(--mint);font-weight:700}
+.brew-editor{
+ width:min(420px,calc(100% - 24px));max-height:calc(100% - 24px);overflow:auto;
+ background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:18px
+}
+.brew-editor::backdrop{background:#160f20b5}

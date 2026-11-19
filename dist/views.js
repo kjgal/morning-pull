@@ -1,5 +1,5 @@
 import {TIMING,round,TASTES,FLOWS} from './core.js';
-import {SYRUPS,STORAGE_GUIDANCE,PANTRY,FLAVORS,MILKS,drinks,matchImportedRecipe} from './recipes.js';
+import {SYRUPS,STORAGE_GUIDANCE,PANTRY,FLAVORS,MILK_PREFERENCES,drinks,matchImportedRecipe,matchesDrinkPreference,drinkAdditions} from './recipes.js';
 import {e,heading,btn,link,submit,actions,fields,panel,form,input,number,textarea,select,checks,details,bagName,measure,displayRatio,ageLine,gearForm,equipmentSetupForm,hasEquipment,unfinishedShot,equipmentSummary,resultDisplay,planDisplay,tasteFields,measurementFields,advicePanel,pourView} from './ui.js';
 
 import {offlineMessages} from './offline.js';
@@ -7,7 +7,7 @@ import {APP_VERSION} from './version.js';
 import {recipeUnits} from './recipe-import.js';
 
 export const methods = ['Unknown','Original bag','Sealed container','Vacuum sealed','Freezer','Other'];
-export const defaultDrink = {temp:'Iced',milk:'Oat milk',diet:'Any milk',sweet:'Light',strength:'Regular',pantry:['espresso','water','ice'],otherSyrup:''};
+export const defaultDrink = {temp:'Iced',milk:'No preference',diet:'Any milk',sweet:'Light',strength:'Regular',pantry:['espresso','water','ice'],otherSyrup:''};
 export const freshTaste = () => ({tastes:[],flows:[],rating:null,note:'',detail:'',change:''});
 
 export function home(state,continueCoach=false) {
@@ -121,8 +121,8 @@ export function compareView(shots) {
   return heading('Compare shots')+(mixed?'<p class="note">Timing conventions differ or are unknown. Compare the times only when both shots were timed the same way.</p>':'')+
    `<div class="compare">${shots.map(s=>panel(`<p><a href="#shot/${e(s.id)}">${e(shotTitle(s))}</a></p>${shotBody(s)}<p class="small">Next step: ${e(s.advice.title)}</p>`)).join('')}</div>`+actions(link('Back to history','history','ghost'));
 }
-export function quickBrew(pouring,animate=false) {
-  if(pouring) return pourView({},animate);
+export function quickBrew(pouring) {
+  if(pouring) return pourView(pouring);
   return panel(heading('Quick brew')+actions(btn('Start brewing','start-quick','','primary')));
 }
 export function calculator() {
@@ -152,14 +152,15 @@ export function drinkSuggestions(options) {
   ${extras.length?`<section class="section-gap"><h2>Needs extra ingredients</h2>${recipeGrid(extras)}</section>`:''}`;
 }
 export function savedDrinkCards(recipes,options) {
-  const custom=recipes.filter(r=>r.kind==='drink').map(r=>matchImportedRecipe(r,options));
+  const custom=recipes.filter(r=>r.kind==='drink').map(r=>matchImportedRecipe(r,options)).filter(r=>matchesDrinkPreference(r,options));
   return custom.length?`<section class="section-gap"><h2>Your saved drinks</h2>${recipeGrid(custom)}</section>`:'';
 }
 export function recipeHome(state,kind,options) {
   const custom=state.recipes.filter(r=>kind==='favorites'?r.favorite:r.kind===(kind==='drinks'?'drink':'syrup')).map(r=>matchImportedRecipe(r,options));
   const filters=kind==='drinks'?panel(form('drink-filter',`<h2>What are you in the mood for?</h2>`+fields(
-    select('Temperature','temp',options.temp,['Hot','Iced'])+select('Milk','milk',options.milk,MILKS)+select('Dietary preference','diet',options.diet,['Any milk','Dairy-free'])+
+    select('Temperature','temp',options.temp,['Hot','Iced'])+select('Milk preference','milk',options.milk,MILK_PREFERENCES)+
     select('Sweetness','sweet',options.sweet,['Unsweetened','Light','Regular','Sweet'])+select('Coffee strength','strength',options.strength,['Gentle','Regular','Bold']))+
+    (options.diet==='Dairy-free'?'<p class="small">Your saved dairy-free preference still applies to ingredients, including sauces and toppings.</p>':'')+
     details('Ingredients & syrups on hand',checks('Ingredients','pantry',Object.entries(PANTRY),options.pantry)+
       checks('Syrup flavors','pantry',Object.entries(FLAVORS),options.pantry)+
       input('Another syrup you have','otherSyrup',options.otherSyrup,'maxlength="50" placeholder="e.g. Hazelnut"'),true)+
@@ -174,6 +175,24 @@ const recipeAmount = new Intl.NumberFormat(undefined,{maximumFractionDigits:7,us
 export const recipeItems = items => `<ul class="inline-list">${items.map(i=>`<li>
   ${i.amount==null?'':e(recipeAmount.format(i.amount)+(i.unit==='count'?'':' '+i.unit))+' '}
   <span>${e(i.name)}${i.optional?' (optional)':''}</span>${i.amount==null?' <small>(amount unconfirmed)</small>':''}</li>`).join('')}</ul>`;
+const cupRecipePath = (where,recipe) => 'brew-drink/'+where+'/'+encodeURIComponent(recipe.id);
+const cupFavorite = recipe => btn((recipe.favorite?'Unfavorite ':'Favorite ')+recipe.name,'favorite-recipe',recipe.id,'ghost');
+export function brewedDrinkPicker({favorites,suggestions},where){
+  const grid=recipes=>`<div class="grid">${recipes.map(recipe=>panel(
+    `<h3><a href="#${e(cupRecipePath(where,recipe))}">${e(recipe.name)}</a></h3>${pantrySummary(recipe)}${actions(cupFavorite(recipe))}`)).join('')}</div>`;
+  return heading('Make a drink','Use the espresso already in your cup.')+actions(link('Back to Brewing',where,'ghost'))+
+    (favorites.length?`<section class="section-gap"><h2>Favorite drinks</h2>${grid(favorites)}</section>`:'')+
+    (suggestions.length?`<section class="section-gap"><h2>${favorites.length?'More drinks you can make':'Drinks you can make'}</h2>${grid(suggestions)}</section>`:'')+
+    (!favorites.length&&!suggestions.length?panel('<p>No drinks match your preferences and ingredients.</p>'+link('Edit drink preferences','drinks','ghost'),'section-gap'):'');
+}
+export function brewedDrinkRecipe(recipe,where){
+  const additions=drinkAdditions(recipe);
+  return heading(recipe.name)+actions(link('Back to drinks','brew-drinks/'+where,'ghost')+link('Back to Brewing',where,'ghost'))+
+    panel('<h2>Add to your espresso</h2>'+
+      (additions.length?recipeItems(additions):'<p>Your espresso is ready as it is.</p>')+
+      (recipe.cupSteps?.length?`<ol class="inline-list">${recipe.cupSteps.map(step=>`<li>${e(step)}</li>`).join('')}</ol>`:'')+
+      pantrySummary(recipe)+actions(cupFavorite(recipe)),'section-gap');
+}
 export function recipeView(r,isSaved) {
   const scalable=r.items.some(i=>i.amount!=null);
   const unmeasured=r.items.some(i=>i.amount==null);

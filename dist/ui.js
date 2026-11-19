@@ -1,5 +1,5 @@
 import {selection} from './selection.js';
-import {EQUIPMENT,TIMING,TASTES,FLOWS,age,round,ratioOf,targetYield,extraction,isCapsule,prepSteps,recipeReason} from './core.js';
+import {EQUIPMENT,TIMING,TASTES,FLOWS,age,round,ratioOf,targetYield,extraction,isCapsule,prepSteps,recipeReason,positive,validTimerTarget,shotClock} from './core.js';
 export const e = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const eq = (value,other) => value === other ? ' selected' : '';
 export const checked = value => value ? ' checked' : '';
@@ -30,11 +30,11 @@ export const error = (node,message) => {
   alert.hidden = !message;
   alert.textContent = message;
 };
-export const gearLabels = {machine:'Machine type',grinder:'Grinder',basket:'Basket',scale:'Scale available?',timer:'Timing device',stop:'Brew stop control',temperature:'Temperature control',infusion:'Pre-infusion control',tamper:'Tamper available?',distribution:'Distribution tools'};
+export const gearLabels = {machine:'Machine type',warmup:'Does your machine’s manual recommend a warming flush?',grinder:'Grinder',basket:'Basket',scale:'Scale available?',timer:'Timing device',stop:'Brew stop control',temperature:'Temperature control',infusion:'Pre-infusion control',tamper:'Tamper available?',distribution:'Distribution tools'};
 const gearSelect = (gear,key) => select(gearLabels[key],key,gear[key] ?? 'Not sure',EQUIPMENT[key]);
 export const gearForm = gear => fields(['machine','grinder','basket','scale','stop'].map(k=>gearSelect(gear,k)).join('')+
   number('Basket’s rated dose (g, if known)','ratedDose',gear.ratedDose,'min=".1" max="60"'))+
-  details('More equipment details',fields(['temperature','infusion','tamper','distribution'].map(k=>gearSelect(gear,k)).join('')),['temperature','infusion','tamper','distribution'].some(k=>gear[k] && gear[k]!=='Not sure'));
+  details('More equipment details',fields(['temperature','infusion','tamper','distribution','warmup'].map(k=>gearSelect(gear,k)).join('')),['temperature','infusion','tamper','distribution','warmup'].some(k=>gear[k] && gear[k]!=='Not sure'));
 const setupChoices = {
   machine:[['Not sure','Not sure'],['Pump espresso machine','Pump machine with a removable handle'],['Manual lever','Manual lever machine'],
     ['Automatic / bean-to-cup','Automatic machine that grinds and brews'],['Capsule machine','Capsule machine']],
@@ -49,7 +49,7 @@ export const equipmentSetupForm = gear => fields(
   select('Can you weigh the espresso?','scale',gear.scale,[['Not sure','Not sure'],['Yes','Yes, I have a scale'],['No','No scale']]))+
   details('Basket and other controls',fields(gearSelect(gear,'basket')+
     number('Basket’s rated dose (g, if known)','ratedDose',gear.ratedDose,'min=".1" max="60"')+
-    ['temperature','infusion','tamper','distribution'].map(k=>gearSelect(gear,k)).join('')));
+    ['temperature','infusion','tamper','distribution','warmup'].map(k=>gearSelect(gear,k)).join('')));
 export const unfinishedShot = draft => Boolean(draft && draft.step<8 && !draft.savedId);
 export const shotNavigation = () => actions(btn('Start over','new-shot','','ghost')+link('Dashboard','home','ghost'));
 const trialInstructions = test => test ? `<div class="note"><strong>${e(test.title)}</strong><p>${e(test.instruction)}</p>${test.keep?`<p class="small">${e(test.keep)}</p>`:''}</div>` : '';
@@ -69,6 +69,7 @@ export const ageLine = (bag,on) => {
 };
 export function planDisplay(plan,gear) {
   const items=[['Target dose',measure(plan.dose,'g')],['Target yield',measure(targetYield(plan.dose,plan.ratio),'g')],['Brew ratio',isCapsule(gear)?'—':displayRatio(plan.ratio)]];
+  if(validTimerTarget(plan.targetSeconds)) items.push(['Target time',measure(plan.targetSeconds,'s')]);
   if(plan.temperature!==null) items.push(['Temperature',measure(plan.temperature,'°C')]);
   if(plan.preInfusion!==null) items.push(['Pre-infusion',measure(plan.preInfusion,'s')]);
   return metric(items);
@@ -87,13 +88,19 @@ export const measurementFields = (a,timing) => fields(number('Dry dose (g)','dos
  details('Measured TDS',`<p class="small">Total dissolved solids (TDS) is the concentration measured with a coffee refractometer. For 9% TDS, enter 9.</p>`+
    number('Measured TDS (%)','tds',a.tds,'min=".001" max="100"'),a.tds!==null && a.tds!==undefined);
 
+function prepChecklist(draft,planned,editable=true){
+  const steps=prepSteps(draft.gear,planned);
+  return `<fieldset class="prep-list"><legend>Puck preparation</legend>${steps.map(([key,label,hint])=>
+    `<label><input type="checkbox" name="prep" value="${key}"${checked(draft.prepChecked?.includes(key))}${editable?'':' disabled'}>
+    <span><span data-prep-label="${key}">${e(label)}</span>${hint?`<small>${e(hint)}</small>`:''}</span></label>`).join('')}</fieldset>`;
+}
 const go = value => btn(value===1?'Back to beans':'Back','brew-step',value,'ghost');
 const titles=['Choose your beans','Set up your shot','Suggested recipe'];
 
-export function brewView(draft,state,editingEquipment=false,animate=false) {
+export function brewView(draft,state,editingEquipment=false) {
   const {planned}=draft;
   const gear=draft.step===2?state.equipment:draft.gear;
-  if(draft.step===5 && (draft.pouring||draft.timer?.startedAt!=null)) return pourView(draft,animate);
+  if(draft.step===5 && (draft.pouring||draft.timer?.startedAt!=null)) return pourView(draft);
   const step=[4,5].includes(draft.step)?3:draft.step;
   const bag=state.bags.find(b=>b.id===draft.bagId);
   const portion=bag?.portions.find(p=>p.id===draft.portionId);
@@ -114,15 +121,16 @@ export function brewView(draft,state,editingEquipment=false,animate=false) {
       actions((editing?(hasSetup?btn('Cancel equipment edit','equipment-cancel','','ghost'):btn('Plan recipe without equipment details','plan-without-gear','','ghost')):submit('Plan recipe'))+go(1)));
   }else if(step===3){
     const guidance=[planned.grind,planned.prep,planned.heat].filter(Boolean);
-    const preparation=`<ol class="inline-list">${prepSteps(gear).map(instruction=>`<li>${e(instruction)}</li>`).join('')}</ol>`;
+    const preparation=prepChecklist(draft,planned);
+    const suggestedDose=!isCapsule(gear)&&!positive(gear.ratedDose,60);
     const recipeInputs=(!isCapsule(gear)?fields(number('Planned dose (g)','dose',planned.dose,'min=".1" max="60"')+
-      number('Planned cup target (g)','cupTarget',targetYield(planned.dose,planned.ratio),'min=".1" max="500"')):'')+
+      number('Planned cup target (g)','cupTarget',planned.dose?measure(targetYield(planned.dose,planned.ratio)):null,'min=".1" max="500"')):'')+
       (gear.temperature==='Adjustable'?number('Temperature (°C)','temperature',planned.temperature,'min="70" max="105"'):'');
     body=trialInstructions(draft.test)+(!draft.test&&guidance.length?`<p class="note">${guidance.map(e).join(' ')}</p>`:'')+
-      form('brew-plan',planDisplay(planned,gear)+
+      form('brew-plan',`<div data-planned-metrics>${planDisplay(planned,gear)}</div>`+
       (!isCapsule(gear)?`<p class="small">${e(recipeReason(planned))} The cup target is the dose multiplied by the ratio.</p>`:'')+
-      details('Puck preparation',preparation)+(recipeInputs?details('Recipe settings',recipeInputs):'')+
-      '<p class="small section-gap" id="planned-preview" hidden></p>'+
+      (suggestedDose?`<p class="small" data-dose-note>${planned.dose?'The target dose is a suggested starting point. Use a dose that fits your basket.':'Basket capacity is unknown. Enter a dose that fits your basket.'}</p>`:'')+
+      preparation+(recipeInputs?details('Recipe settings',recipeInputs,suggestedDose):'')+
       actions(submit('Start brewing')+(draft.coachUndo?btn('Undo','undo-planned-change','','ghost'):'')+(draft.test?link('My equipment','equipment/brew','ghost'):go(2))));
   }else{
     body=`<p>Your results are in History.</p>`+actions(link('Open shot','shot/'+draft.savedId,'primary')+btn('Pull another shot','new-shot',draft.savedId)+link('Dashboard','home','ghost'));
@@ -134,14 +142,45 @@ export function brewView(draft,state,editingEquipment=false,animate=false) {
       ${step>=3 && previous?panel(`<h2>Previous attempt</h2><p class="small">${e(previous.day)} · ${e(previous.tastes.join(', ')||'Taste unrecorded')}</p>
       ${previous.change?`<p class="small">Changed: ${e(previous.change)}</p>`:''}${link('View attempt','shot/'+previous.id,'ghost')}`):''}</aside></div>`;
 }
-export function pourView(draft,animate=false){
-  const grams=targetYield(draft.planned?.dose,draft.planned?.ratio);
-  return panel(heading('Brewing')+`<div class="pour-scene${animate?' is-pouring':''}" aria-hidden="true">
-    <div class="mp-window"></div><div class="mp-lamp"></div>
+function brewEditor(key,title,field){
+  return `<dialog class="brew-editor" data-editor="${key}" aria-labelledby="${key}-title">
+    <h2 id="${key}-title">${title}</h2>${form(key,field+actions(submit('Save')+btn('Cancel','close-brew-editor','','ghost')))}</dialog>`;
+}
+export function brewControls(draft){
+  const {planned,gear={}}=draft;
+  const grams=targetYield(planned?.dose,planned?.ratio);
+  const hasTarget=grams!==null&&!isCapsule(gear);
+  return hasTarget?`<div class="row"><p class="pour-target">Target yield · ${measure(grams,'g')}</p>
+    ${btn('Edit target yield','open-brew-editor','brew-yield','ghost')}</div>
+    <p class="small">Target dose · ${measure(planned.dose,'g')} · Brew ratio ${displayRatio(planned.ratio)}</p>
+    ${brewEditor('brew-yield','Edit target yield',number('Target espresso weight (g)','cupTarget',measure(grams),
+      'min=".1" max="500" required'))}`:'';
+}
+export function brewTimer(draft){
+  const duration=validTimerTarget(draft.planned?.targetSeconds)?draft.planned.targetSeconds:null;
+  const clock=duration===null?null:shotClock(draft.shotClock,duration);
+  const timing=clock?.running?btn('Stop timer','stop-brew-timer','','ghost'):
+    !clock&&btn('Start timer',duration===null?'open-brew-editor':'start-brew-timer',duration===null?'brew-duration':'','primary');
+  return `<div class="clock-display" aria-label="Optional shot timer">
+    <strong data-countdown${clock&&!clock.running?' hidden':''}>${clock?clock.remaining+' s left':duration===null?'Shot timer':duration+' s'}</strong>
+    ${clock?'<span data-elapsed></span>':''}
+    </div><div class="clock-actions">${timing||''}
+    ${!clock&&duration!==null?btn('Edit timer','open-brew-editor','brew-duration','ghost'):''}
+    ${!clock&&draft.decorativeStartedAt==null?btn('Skip timer','skip-brew-timer','','ghost'):''}
+    </div>
+    ${clock?`<p class="timer-cue" role="status" data-clock-cue${clock.reached?'':' hidden'}>Check your yield</p>`:
+      brewEditor('brew-duration','Timer duration',input('Target seconds','targetSeconds',duration??30,
+        'type="number" inputmode="numeric" min="1" max="3600" step="1" required'))}`;
+}
+export function pourView(draft){
+  return panel(heading('Brewing')+`<div class="pour-scene">
+    <div class="brew-clock" data-brew-timer>${brewTimer(draft)}</div>
+    <div class="pour-art" aria-hidden="true"><div class="mp-window"></div><div class="mp-lamp"></div>
     <div class="mp-brewer"><div class="mp-backplate"></div><div class="mp-copper"></div><div class="mp-head"></div>
-    <div class="mp-cup-handle"></div><div class="mp-cup"></div><div class="mp-stream"></div><div class="mp-tray"></div></div></div>
+    <div class="mp-cup-handle"></div><div class="mp-cup"></div><div class="mp-stream"></div><div class="mp-tray"></div></div></div></div>
+    <div data-brew-controls>${brewControls(draft)}</div>
     ${trialInstructions(draft.test)}
-    ${!draft.test && grams!==null && !isCapsule(draft.gear??{})?`<p class="pour-target">Target yield · ${measure(grams,'g')}</p>`:''}
-    <p class="small">The pour is an illustration. Use your machine and cup target to decide when to stop.</p>
-    ${draft.test?planDisplay(draft.planned,draft.gear):''}${btn('Ready to taste','finish-pour','','primary finish-pour')}${shotNavigation()}`,'pour-panel');
+    ${draft.test?`<p class="small" data-edited-target${draft.targetEdited?'':' hidden'}>The target above reflects your edit. The coach’s original suggestion is shown for reference.</p>`:''}
+    ${actions(btn('Ready to taste','finish-pour','','primary')+btn('Make a drink','make-brewed-drink','','ghost'))}
+    ${draft.prepChecked?.length?details('Prep checklist',prepChecklist(draft,draft.planned,false)):''}${shotNavigation()}`,'pour-panel');
 }

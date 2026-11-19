@@ -2,10 +2,10 @@ import {enableSelection} from './selection.js';
 import { coachGear, equipmentQuestions, evaluateEspresso, openings, updateCoachAnswer } from './espresso-coach.js';
 import { coachScreen, followQuestions, nextBaseline } from './coach-ui.js';
 import {chatCapability,shotContext,sendChat} from './chat.js';
-import {EQUIPMENT,emptyState,id,positive,localDate,age,bagDateError,storageDateError,ratioOf,targetYield,extraction,scaleItems,isCapsule,startingRecipe,labelSuggestions} from './core.js';
+import {EQUIPMENT,emptyState,id,positive,localDate,age,bagDateError,storageDateError,ratioOf,targetYield,extraction,scaleItems,isCapsule,startingRecipe,labelSuggestions,prepSteps,validTimerTarget,shotClock,pourAnimation,measuredShotTime,round} from './core.js';
 import {load,persist,importData} from './storage.js';
-import {SYRUPS,drinks,milkFor,matchImportedRecipe} from './recipes.js';
-import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment,unfinishedShot} from './ui.js';
+import {SYRUPS,drinks,milkFor,matchImportedRecipe,brewedDrinkChoices,MILK_PREFERENCES} from './recipes.js';
+import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment,unfinishedShot,brewControls,brewTimer,planDisplay} from './ui.js';
 import * as view from './views.js';
 import {offlineMessages,prepareOffline} from './offline.js';
 import {recipeURL,parseRecipeText,loadRecipeLink,recipeUnits} from './recipe-import.js';
@@ -30,14 +30,16 @@ const snapshot = (bag,portion) => ({
   portionName:portion?.name||'',portionMethod:portion?.method||'',frozen:portion?.frozen||'',thawed:portion?.thawed||''
 });
 let state=emptyState();
-let quickPouring=false;
-let animatePour=false;
+let quickPouring=null;
+let clockTick;
 let directCoach=null;
 let brewCoach=null;
 let drinkOptions={...view.defaultDrink};
 try {
-  const remembered=JSON.parse(sessionStorage.getItem('morning-pull-drinks'));
+  const remembered=JSON.parse(localStorage.getItem('morning-pull-drinks')??sessionStorage.getItem('morning-pull-drinks'));
   if(remembered && Array.isArray(remembered.pantry)) drinkOptions={...drinkOptions,...remembered};
+  if(!MILK_PREFERENCES.includes(drinkOptions.milk)) drinkOptions.milk='No preference';
+  if(drinkOptions.diet==='Dairy-free'&&MILK_PREFERENCES.indexOf(drinkOptions.milk)>=2) drinkOptions.milk=milkFor(drinkOptions.milk,drinkOptions.diet);
 } catch {}
 let restoreCandidate=null;
 let selection=new Set();
@@ -96,7 +98,7 @@ function planFor(draft,gear){
 async function saveEquipment(gear,goal=state.draft?.goal){
   const old=state.equipment;
   if(old.machine&&old.machine!=='Not sure'&&gear.machine!==old.machine){
-    for(const key of ['basket','ratedDose','temperature','infusion','timer','tamper','distribution']){
+    for(const key of ['basket','ratedDose','temperature','infusion','timer','tamper','distribution','warmup']){
       if(gear[key]===old[key]) delete gear[key];
     }
   }
@@ -111,7 +113,7 @@ async function saveEquipment(gear,goal=state.draft?.goal){
   const draft=state.draft;
   const changed=Object.keys({...old,...gear}).some(key=>(old[key]??null)!==(gear[key]??null));
   const replan=pendingBrew(draft)&&(changed||goal!==draft.goal);
-  const update=replan?{draft:{...draft,goal,gear,planned:planFor({...draft,goal},gear),test:null,coachUndo:null}}:{};
+  const update=replan?{draft:{...draft,goal,gear,planned:planFor({...draft,goal},gear),test:null,coachUndo:null,prepChecked:[]}}:{};
   await commit({equipment:gear,...update});
   if(changed&&unfinishedCoach()){
     for(const key of Object.keys(equipmentQuestions)) delete directCoach.answers[key];
@@ -132,7 +134,7 @@ const getBag = key => state.bags.find(b=>b.id===key);
 const getShot = key => state.shots.find(s=>s.id===key);
 const recentFor = bagId => bagId ? state.shots.find(s=>s.bagId===bagId) : null;
 const navGroup = page => /^(bean|bag|portion|refreeze)/.test(page) ? 'beans' : /^(history|shot|compare|favorites)/.test(page) ? 'history' :
-  /^(recipes?|drinks)/.test(page) ? 'recipes' : ['brew','timer','coach','calculator'].includes(page)?'brew':page;
+  /^(recipes?|drinks)/.test(page) ? 'recipes' : ['brew','timer','coach','calculator','brew-drinks','brew-drink'].includes(page)?'brew':page;
 
 function render(focus=false) {
   const [page='home',key,part]=route();
@@ -159,9 +161,9 @@ function render(focus=false) {
     case 'home': content=view.home(state,unfinishedCoach()); break;
     case 'brew':
       content=state.draft && [6,7].includes(state.draft.step)?renderCoach(false):
-        state.draft?brewView(state.draft,state,editingEquipment,animatePour):heading('Pull a shot')+link('Dashboard','home','ghost');
+        state.draft?brewView(state.draft,state,editingEquipment):heading('Pull a shot')+link('Dashboard','home','ghost');
       break;
-    case 'timer': content=view.quickBrew(quickPouring,animatePour); break;
+    case 'timer': content=view.quickBrew(quickPouring); break;
     case 'equipment': content=view.equipmentView(state.equipment,key); break;
     case 'calculator': content=view.calculator(); break;
     case 'coach': content=renderCoach(true); break;
@@ -173,6 +175,17 @@ function render(focus=false) {
     case 'shot': content=shot?view.shotView(shot,state):unavailable; break;
     case 'shot-edit': content=shot?view.shotEdit(shot):unavailable; break;
     case 'compare': content=view.compareView(state.shots.filter(s=>selection.has(s.id))); break;
+    case 'brew-drinks':
+    case 'brew-drink': {
+      if(!brewingShot(key)){
+        content=heading('Make a drink')+link('Back to dashboard','home','ghost');
+        break;
+      }
+      const picks=brewedDrinkChoices(state.recipes,drinkOptions);
+      const recipe=[...picks.favorites,...picks.suggestions].find(r=>r.id===part)??selectedCupRecipe(part);
+      content=home==='brew-drink'&&recipe?view.brewedDrinkRecipe(recipe,key):view.brewedDrinkPicker(picks,key);
+      break;
+    }
     case 'drinks': case 'recipes': case 'recipe-favorites': content=view.recipeHome(state,home==='recipes'?'syrups':home==='drinks'?'drinks':'favorites',drinkOptions); break;
     case 'recipe':
       activeRecipe=getRecipe(key);
@@ -190,7 +203,7 @@ function render(focus=false) {
     default: content=view.home(state);
   }
   main.innerHTML=content;
-  animatePour=false;
+  refreshBrewClock();
   if(home==='calculator') refreshCalculation(main.querySelector('form'));
   if(home==='coach') void showChat();
   if(focus || (home==='brew' && previousStep!==state.draft?.step)){
@@ -227,9 +240,10 @@ function activeSession(){
   const gear=origin?.gear??state.equipment;
   const bagId=origin?.bagId??'';
   const recorded=origin?.actual??emptyActual();
-  const actual=recorded.timeSource==='manual'?{...recorded}:{...recorded,seconds:null,timing:'unknown'};
+  const actual=measuredShotTime(recorded)?{...recorded}:{...recorded,seconds:null,timing:'unknown'};
   const session={
-    origin,gear,bagId,portionId:origin?.portionId??'',screen:origin?.test?'test-result':direct||origin?.quickLog?'notice':'start',
+    origin,gear,bagId,portionId:origin?.portionId??'',screen:origin?.timerReading?'confirm-timer':origin?.test?'test-result':direct||origin?.quickLog?'notice':'start',
+    timerReading:origin?.timerReading,
     planned:origin?.planned??startingRecipe(gear,null,'Balanced'),actual,
     answers:{taste:origin?.tastes?.includes('Sour')&&origin?.tastes?.some(t=>t==='Bitter'||t==='Dry')?'Mixed':origin?.tastes?.[0],flow:origin?.flows?.find(f=>!['Not sure','Inconsistent'].includes(f))?.replace('Spraying','Uneven')},
     undone:false,note:origin?.note??'',...structuredClone(origin?.coach),savedId:origin?.savedId??''
@@ -331,17 +345,81 @@ async function showChat(){
       <p class="error" role="alert" hidden></p><p class="small" id="chat-reply" aria-live="polite"></p>
     </form></details>`;
 }
+function brewingShot(page){
+  if(page==='timer') return quickPouring;
+  const draft=state.draft;
+  return page==='brew'&&draft?.step===5&&(draft.pouring||draft.timer?.startedAt!=null)?draft:null;
+}
+const currentPour = () => brewingShot(route()[0]);
+function selectedCupRecipe(key){
+  const saved=state.recipes.find(r=>r.id===key);
+  if(!saved) return null;
+  const choices=brewedDrinkChoices([{...saved,favorite:true}],drinkOptions);
+  const recipe=choices.favorites[0];
+  return recipe?{...recipe,favorite:saved.favorite}:null;
+}
+async function updatePour(fields){
+  if(route()[0]==='timer') quickPouring={...quickPouring,...fields};
+  else await commitDraft(fields);
+}
+function refreshBrewClock(){
+  clearInterval(clockTick);
+  const draft=currentPour();
+  const art=main.querySelector('.pour-art');
+  if(!draft||!art) return;
+  const elapsed=main.querySelector('[data-elapsed]');
+  const countdown=main.querySelector('[data-countdown]');
+  const cue=main.querySelector('[data-clock-cue]');
+  const tick=()=>{
+    const now=Date.now();
+    const clock=shotClock(draft.shotClock,draft.planned?.targetSeconds,now);
+    if(clock){
+      const text=(clock.running?Math.floor(clock.elapsed):round(clock.elapsed,1))+' s elapsed';
+      if(elapsed.textContent!==text) elapsed.textContent=text;
+      const remaining=clock.remaining+' s left';
+      if(countdown.textContent!==remaining) countdown.textContent=remaining;
+      if(cue.hidden===clock.reached) cue.hidden=!clock.reached;
+    }
+    const animation=pourAnimation(draft,clock,now);
+    const mode=animation?.mode??'';
+    if((art.dataset.pourMode??'')!==mode){
+      if(animation) art.style.setProperty('--pour-offset',`-${animation.elapsed}s`);
+      art.dataset.pourMode=mode;
+    }
+    return clock?.running||Boolean(animation);
+  };
+  if(tick()) clockTick=setInterval(()=>{if(!tick()) clearInterval(clockTick);},100);
+}
+function updateBrewControls(focus){
+  const controls=main.querySelector('[data-brew-controls]');
+  const draft=currentPour();
+  if(!controls||!draft) return;
+  controls.innerHTML=brewControls(draft);
+  const edited=main.querySelector('[data-edited-target]');
+  if(edited&&draft.targetEdited) edited.hidden=false;
+  main.querySelector(focus)?.focus({preventScroll:true});
+}
+function updateBrewTimer(focus){
+  const timer=main.querySelector('[data-brew-timer]');
+  const draft=currentPour();
+  if(!timer||!draft) return;
+  timer.innerHTML=brewTimer(draft);
+  refreshBrewClock();
+  main.querySelector(focus)?.focus({preventScroll:true});
+}
 async function finishPour(quickMode){
+  const draft=currentPour();
+  if(!draft) return;
+  const elapsed=shotClock(draft.shotClock,draft.planned?.targetSeconds)?.elapsed;
+  const timerReading=positive(elapsed,3600)?Math.max(.1,round(elapsed,1)):null;
   if(quickMode){
-    if(!quickPouring) return;
-    const gear={...state.equipment};
-    directCoach={origin:null,gear,planned:startingRecipe(gear,null,'Balanced'),bagId:'',portionId:'',screen:'start',
-      actual:emptyActual(),answers:{},undone:false,note:'',savedId:''};
-    quickPouring=false;
+    directCoach={origin:null,gear:draft.gear,planned:draft.planned,bagId:'',portionId:'',
+      screen:timerReading?'confirm-timer':'start',timerReading,actual:emptyActual(),answers:{},undone:false,note:'',savedId:''};
+    quickPouring=null;
     jump('coach');
-  }else if(state.draft?.step===5){
-    const {timer,cue,...draft}=state.draft;
-    await commit({draft:{...draft,step:6,pouring:false,actual:emptyActual()}});
+  }else{
+    const {timer,cue,shotClock:previousClock,decorativeStartedAt,...rest}=draft;
+    await commit({draft:{...rest,step:6,pouring:false,timerReading,actual:emptyActual()}});
     render(true);
   }
 }
@@ -515,15 +593,33 @@ async function submitForm(node) {
       if(!positive(ratio,10)) throw new Error('The cup target must be no more than ten times the dry dose.');
       const edited=cup!==null&&cup!==targetYield(old.dose,old.ratio)||dose!==old.dose;
       const planned={...old,dose,ratio,timing:'unknown',temperature:numeric(f,'temperature'),...(edited?{basis:'custom'}:{})};
-      const {timer,cue,...rest}=draft;
-      await commit({draft:{...rest,step:5,pouring:true,planned,coachUndo:null,actual:emptyActual()}});
-      animatePour=true;
+      const {timer,cue,shotClock:previousClock,decorativeStartedAt,...rest}=draft;
+      await commit({draft:{...rest,step:5,pouring:true,planned,prepChecked:f.getAll('prep'),coachUndo:null,actual:emptyActual()}});
       break;
+    }
+    case 'brew-yield': {
+      const draft=currentPour();
+      if(!draft) return;
+      const grams=numeric(f,'cupTarget');
+      const ratio=ratioOf(draft.planned.dose,grams);
+      if(!positive(grams,500)||!positive(ratio,10)) throw new Error('Enter a cup target up to 500 g and no more than ten times the dose.');
+      await updatePour({planned:{...draft.planned,ratio,basis:'custom'},targetEdited:true});
+      updateBrewControls('[data-value="brew-yield"]');
+      return;
+    }
+    case 'brew-duration': {
+      const draft=currentPour();
+      if(!draft||draft.shotClock) return;
+      const targetSeconds=numeric(f,'targetSeconds');
+      if(!validTimerTarget(targetSeconds)) throw new Error('Enter a whole number from 1 to 3600 seconds.');
+      await updatePour({planned:{...draft.planned,targetSeconds}});
+      updateBrewTimer('[data-action="start-brew-timer"]');
+      return;
     }
     case 'coach-test-result': {
       const session=activeSession();
       rememberCoachStep(session);
-      session.actual=actualFrom(f);
+      session.actual={...session.actual,dose:numeric(f,'dose'),yieldG:numeric(f,'yieldG')};
       const answers=session.answers;
       updateCoachAnswer(answers,'taste',clean(f,'taste'));
       updateCoachAnswer(answers,'flow',clean(f,'flow'));
@@ -622,7 +718,10 @@ async function submitForm(node) {
       if(!old) return;
       const taste=tasteFrom(f);
       const actual=actualFrom(f);
-      if(actual.seconds!==null&&(old.actual.timeSource==='manual'||old.actual.seconds!==actual.seconds)) actual.timeSource='manual';
+      if(actual.seconds!==null){
+        if(old.actual.seconds!==actual.seconds||old.actual.timing!==actual.timing) actual.timeSource='manual';
+        else if(measuredShotTime(old.actual)) actual.timeSource=old.actual.timeSource;
+      }
       const shot={...old,...taste,detail:'',actual,updatedAt:new Date().toISOString()};
       const revised=evaluateEspresso({...shot,answers:{taste:shot.tastes[0],flow:shot.flows[0]},bag:shot.bag,previous:getShot(shot.parentId)});
       shot.advice=revised.kind==='question'?{title:'A follow-up would help',change:revised.title,keep:'Keep your recipe steady while checking.',watch:'Use Troubleshoot for the guided follow-up.',why:revised.body??''}:revised;
@@ -726,9 +825,53 @@ async function doAction(el){
       break;
     }
     case 'start-quick':
-      quickPouring=true;
-      animatePour=true;
+      quickPouring={gear:{...state.equipment},planned:startingRecipe(state.equipment,null,'Balanced')};
       render(true);return;
+    case 'open-brew-editor': {
+      const dialog=main.querySelector(`dialog[data-editor="${key}"]`);
+      dialog.querySelector('form').reset();
+      dialog.showModal();
+      dialog.querySelector('input').focus();
+      dialog.querySelector('input').select();
+      return;
+    }
+    case 'close-brew-editor':
+      el.closest('dialog').close();
+      return;
+    case 'start-brew-timer': {
+      const draft=currentPour();
+      if(!draft||draft.shotClock||!validTimerTarget(draft.planned?.targetSeconds)) return;
+      await updatePour({shotClock:{startedAt:Date.now()}});
+      updateBrewTimer('[data-action="stop-brew-timer"]');
+      return;
+    }
+    case 'skip-brew-timer': {
+      const draft=currentPour();
+      if(!draft||draft.shotClock||draft.decorativeStartedAt!=null) return;
+      await updatePour({decorativeStartedAt:Date.now()});
+      updateBrewTimer('[data-action="finish-pour"]');
+      return;
+    }
+    case 'stop-brew-timer': {
+      const clock=currentPour()?.shotClock;
+      if(!clock||clock.stoppedAt!=null) return;
+      await updatePour({shotClock:{...clock,stoppedAt:Date.now()}});
+      updateBrewTimer('[data-action="finish-pour"]');
+      return;
+    }
+    case 'confirm-shot-time': {
+      const session=activeSession();
+      if(session.screen!=='confirm-timer') return;
+      if(key==='use'){
+        session.actual={...session.actual,seconds:session.timerReading,timing:'start',timeSource:'timer'};
+      }else session.answers.noTime=true;
+      session.screen=session.origin?.test?'test-result':'start';
+      await finishCoachStep();
+      return;
+    }
+    case 'make-brewed-drink':
+      if(currentPour()) jump('brew-drinks/'+route()[0]);
+      return;
     case 'finish-pour': await finishPour(route()[0]==='timer');return;
     case 'coach-clear-time': {
       const session=activeSession();
@@ -804,7 +947,7 @@ async function doAction(el){
       await commit({draft:newDraft(getShot(key),coffee)});
       directCoach=null;
       brewCoach=null;
-      quickPouring=false;
+      quickPouring=null;
       jump('brew');
       return;
     }
@@ -848,13 +991,17 @@ async function doAction(el){
       render(true);
       return;
     case 'favorite-recipe': {
-      const recipe=getRecipe(key);
+      const [page,where]=route();
+      const fromCup=['brew-drink','brew-drinks'].includes(page);
+      const saved=state.recipes.find(r=>r.id===key);
+      const picks=fromCup?brewedDrinkChoices(state.recipes,drinkOptions):null;
+      const recipe=saved??(fromCup?picks.suggestions.find(r=>r.id===key):getRecipe(key));
       if(!recipe) return;
-      const saved=state.recipes.some(r=>r.id===key);
       const {missing,unchecked,...base}=recipe;
       const next={...base,id:saved?key:id(),favorite:!recipe.favorite};
       await commit({recipes:saved?state.recipes.map(r=>r.id===key?next:r):[next,...state.recipes]});
-      jump('recipe/'+next.id);
+      if(page==='brew-drinks') render();
+      else jump(page==='brew-drink'?'brew-drink/'+where+'/'+next.id:'recipe/'+next.id);
       return;
     }
     case 'delete-recipe':
@@ -918,9 +1065,9 @@ async function doAction(el){
 }
 function refreshDrinks(form) {
   const f=new FormData(form);
-  const next={...Object.fromEntries(['temp','milk','diet','sweet','strength','otherSyrup'].map(k=>[k,clean(f,k)])),pantry:f.getAll('pantry')};
+  const next={...drinkOptions,...Object.fromEntries(['temp','milk','sweet','strength','otherSyrup'].map(k=>[k,clean(f,k)])),pantry:f.getAll('pantry')};
   const effectiveMilk=milkFor(next.milk,next.diet);
-  if(next.milk!==effectiveMilk){
+  if(next.milk!=='No preference'&&next.milk!==effectiveMilk){
     const field=form.elements.milk;
     field.value=effectiveMilk;
     field.parentElement.querySelector('.selection-trigger span').textContent=effectiveMilk;
@@ -931,7 +1078,7 @@ function refreshDrinks(form) {
     next.pantry=next.pantry.filter(key=>key!=='milk');
   }
   drinkOptions=next;
-  try { sessionStorage.setItem('morning-pull-drinks',JSON.stringify(drinkOptions)); } catch {}
+  try { localStorage.setItem('morning-pull-drinks',JSON.stringify(drinkOptions)); } catch {}
   main.querySelector('#drink-suggestions').innerHTML=view.drinkSuggestions(drinkOptions);
   main.querySelector('#saved-drinks').innerHTML=view.savedDrinkCards(state.recipes,drinkOptions);
   main.querySelector('#drink-update').textContent=`${drinkOptions.temp} drink suggestions updated.`;
@@ -1032,17 +1179,21 @@ main.addEventListener('input',event=>{
     const targetField=node.elements.cupTarget;
     if(event.target.name==='dose'&&targetField){
       const original=state.draft.planned;
-      if(targetField.value===node.dataset.lastSuggestedTarget||node.dataset.lastSuggestedTarget===undefined&&numeric(f,'cupTarget')===targetYield(original.dose,original.ratio)){
+      if(targetField.value===node.dataset.lastSuggestedTarget||node.dataset.lastSuggestedTarget===undefined&&targetField.value===measure(targetYield(original.dose,original.ratio)).replace('—','')){
         const next=positive(d,60)?measure(targetYield(d,original.ratio)):'';
         targetField.value=next;
         node.dataset.lastSuggestedTarget=next;
       }
     }
     const cup=numeric(new FormData(node),'cupTarget');
-    const preview=node.querySelector('#planned-preview');
-    preview.hidden=false;
-    preview.textContent=positive(d,60)?'Updated cup target: '+measure(cup??targetYield(d,state.draft.planned.ratio),'g'):
-      'Enter a dry dose to calculate a target.';
+    const draft=state.draft;
+    const plan={...draft.planned,dose:positive(d,60)?d:null,ratio:ratioOf(d,cup)??draft.planned.ratio};
+    node.querySelector('[data-planned-metrics]').innerHTML=planDisplay(plan,draft.gear);
+    const doseNote=node.querySelector('[data-dose-note]');
+    if(doseNote) doseNote.textContent=plan.dose?'The target dose is a suggested starting point. Use a dose that fits your basket.':
+      'Basket capacity is unknown. Enter a dose that fits your basket.';
+    const doseStep=node.querySelector('[data-prep-label="dose"]');
+    if(doseStep) doseStep.textContent=prepSteps(draft.gear,plan).find(([key])=>key==='dose')[1];
   }
   if(task==='recipe-scale' && activeRecipe){
     const amount=numeric(new FormData(node),'multiplier');
