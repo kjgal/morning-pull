@@ -1,6 +1,6 @@
 import { TIMING } from './core.js';
 import { diagnosticQuestions, equipmentQuestions, openings } from './espresso-coach.js';
-import { actions, bagName, btn, e, fields, form, heading, link, number, panel, select, submit } from './ui.js';
+import { actions, bagName, btn, e, fields, form, heading, link, number, panel, select, shotNavigation, submit } from './ui.js';
 
 const answerList=(options,value)=>`<div class="stack coach-choices">${options.map(([key,label])=>
   `<button type="button" data-action="coach-answer" data-value="${e(key)}" class="ghost"${key===value?' aria-current="true"':''}>${e(label)}</button>`).join('')}</div>`;
@@ -20,7 +20,16 @@ export function coachScreen(session,state,bag,outcome,direct){
   const context=bag?`<p class="small">${e(bagName(bag))}</p>`:'';
   const back=session.trail?.length?actions(btn('Back','coach-back','','ghost')):'';
   let body;
-  if(screen==='start'){
+  if(screen==='test-result'){
+    const canMeasure=session.gear.scale==='Yes'||['yield','dose'].includes(session.origin.test.report);
+    body=heading('Report what happened','Record what you noticed about this test shot.')+
+      form('coach-test-result',fields(
+        select('How did it taste?','taste',session.answers.taste??'unknown',[['Balanced','Tasted good'],...openings.taste])+
+        select('How did it pour?','flow',session.answers.flow??'unknown',openings.flow)+
+        (canMeasure?number('Espresso in the cup (g)','yieldG',actual.yieldG,'min=".1" max="500"')+
+          number('Dry coffee (g)','dose',actual.dose,'min=".1" max="60"'):''))+
+        actions(submit('Get feedback')));
+  }else if(screen==='start'){
     body=heading('How was your coffee?')+answerList([['good','Tasted good'],['wrong','Something wasn’t right'],['describe','Help me describe it']]);
   }else if(screen==='notice'){
     body=heading('What did you notice first?')+answerList([['taste','It tasted off'],['flow','The pour looked off'],['unknown','Not sure']])+
@@ -70,13 +79,14 @@ export function coachScreen(session,state,bag,outcome,direct){
       <p class="small">${e(advice.why)}</p>
       ${advice.watch?`<p class="small">${e(advice.watch)}</p>`:''}
       ${status?`<p class="note" role="status">${e(status)}${!session.undone&&advice.patch?.prep?` · ${e(advice.patch.prep)}`:''}</p>`:''}`+
-      actions((advice.report?btn('Report what happened','coach-report',advice.report,'primary'):
-        advice.kind!=='diagnostic'?btn('Use this for my next shot','coach-try','','primary'):'')+
+      actions((advice.test?btn('Brew a test shot','coach-try','','primary'):
+        advice.kind!=='diagnostic'?btn('Use this for my next shot','coach-try','','primary'):
+        advice.report?btn(advice.report==='equipmentIssue'?'Enter rinse result':'Enter check result','coach-report',advice.report,'primary'):'')+
         (advice.checkClean?btn('Already checked—it’s clean','coach-checked-clean','','ghost'):'')+
         (advice.patch&&!session.undone?btn('Undo','coach-undo','','ghost'):''))+
       actions(btn('Edit answers','coach-edit','','ghost')+
         (session.savedId?link('Saved in History','shot/'+session.savedId,'ghost'):btn('Save this result','coach-save','','ghost')));
-    return panel(context+body,'coach-card');
+    return panel(context+body+shotNavigation(),'coach-card');
   }
-  return panel(context+body+back+(direct&&screen==='notice'?'<div id="connected-chat"></div>':''),'coach-card');
+  return panel(context+body+back+(direct&&screen==='notice'?'<div id="connected-chat"></div>':'')+shotNavigation(),'coach-card');
 }

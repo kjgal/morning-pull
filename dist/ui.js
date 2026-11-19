@@ -35,6 +35,24 @@ const gearSelect = (gear,key) => select(gearLabels[key],key,gear[key] ?? 'Not su
 export const gearForm = gear => fields(['machine','grinder','basket','scale','stop'].map(k=>gearSelect(gear,k)).join('')+
   number('Basket’s rated dose (g, if known)','ratedDose',gear.ratedDose,'min=".1" max="60"'))+
   details('More equipment details',fields(['temperature','infusion','tamper','distribution'].map(k=>gearSelect(gear,k)).join('')),['temperature','infusion','tamper','distribution'].some(k=>gear[k] && gear[k]!=='Not sure'));
+const setupChoices = {
+  machine:[['Not sure','Not sure'],['Pump espresso machine','Pump machine with a removable handle'],['Manual lever','Manual lever machine'],
+    ['Automatic / bean-to-cup','Automatic machine that grinds and brews'],['Capsule machine','Capsule machine']],
+  grinder:[['Not sure','Not sure'],['Adjustable espresso grinder','I can adjust how fine it grinds'],['Fixed or limited grinder','Fixed or limited settings'],
+    ['Pre-ground coffee','I use pre-ground coffee'],['Built-in or automated','The machine handles it']]
+};
+export const equipmentSetupForm = gear => fields(
+  select('What kind of machine do you use?','machine',gear.machine,setupChoices.machine)+
+  select('How do you grind your coffee?','grinder',gear.grinder,setupChoices.grinder)+
+  select('Can you choose when to stop the shot?','stop',gear.stop,[['Not sure','Not sure'],
+    ['Can stop at a chosen yield','Yes, I can stop it'],['Preset or automatic only','It stops automatically']])+
+  select('Can you weigh the espresso?','scale',gear.scale,[['Not sure','Not sure'],['Yes','Yes, I have a scale'],['No','No scale']]))+
+  details('Basket and other controls',fields(gearSelect(gear,'basket')+
+    number('Basket’s rated dose (g, if known)','ratedDose',gear.ratedDose,'min=".1" max="60"')+
+    ['temperature','infusion','tamper','distribution'].map(k=>gearSelect(gear,k)).join('')));
+export const unfinishedShot = draft => Boolean(draft && draft.step<8 && !draft.savedId);
+export const shotNavigation = () => actions(btn('Start over','new-shot','','ghost')+link('Dashboard','home','ghost'));
+const trialInstructions = test => test ? `<div class="note"><strong>${e(test.title)}</strong><p>${e(test.instruction)}</p>${test.keep?`<p class="small">${e(test.keep)}</p>`:''}</div>` : '';
 export const hasEquipment = gear => Object.keys(gear).length>0;
 export function equipmentSummary(gear) {
   const entries=['machine','grinder','basket'].map(k=>gear[k]).filter(v=>v&&v!=='Not sure');
@@ -72,10 +90,10 @@ export const measurementFields = (a,timing) => fields(number('Dry dose (g)','dos
 const go = value => btn(value===1?'Back to beans':'Back','brew-step',value,'ghost');
 const titles=['Choose your beans','Set up your shot','Suggested recipe'];
 
-export function brewView(draft,state,editingEquipment=false) {
+export function brewView(draft,state,editingEquipment=false,animate=false) {
   const {planned}=draft;
   const gear=draft.step===2?state.equipment:draft.gear;
-  if(draft.step===5 && (draft.pouring||draft.timer?.startedAt!=null)) return pourView(draft);
+  if(draft.step===5 && (draft.pouring||draft.timer?.startedAt!=null)) return pourView(draft,animate);
   const step=[4,5].includes(draft.step)?3:draft.step;
   const bag=state.bags.find(b=>b.id===draft.bagId);
   const portion=bag?.portions.find(p=>p.id===draft.portionId);
@@ -93,36 +111,37 @@ export function brewView(draft,state,editingEquipment=false) {
     body=form('brew-gear',
       (editing?gearForm(gear)+actions(submit('Save equipment')):equipmentSummary(gear))+
       select('Taste goal','goal',draft.goal,['Balanced','More body','More clarity'])+
-      actions((editing?hasSetup?btn('Cancel equipment edit','equipment-cancel','','ghost'):'':submit('Plan recipe'))+go(1)));
+      actions((editing?(hasSetup?btn('Cancel equipment edit','equipment-cancel','','ghost'):btn('Plan recipe without equipment details','plan-without-gear','','ghost')):submit('Plan recipe'))+go(1)));
   }else if(step===3){
     const guidance=[planned.grind,planned.prep,planned.heat].filter(Boolean);
     const preparation=`<ol class="inline-list">${prepSteps(gear).map(instruction=>`<li>${e(instruction)}</li>`).join('')}</ol>`;
     const recipeInputs=(!isCapsule(gear)?fields(number('Planned dose (g)','dose',planned.dose,'min=".1" max="60"')+
       number('Planned cup target (g)','cupTarget',targetYield(planned.dose,planned.ratio),'min=".1" max="500"')):'')+
       (gear.temperature==='Adjustable'?number('Temperature (°C)','temperature',planned.temperature,'min="70" max="105"'):'');
-    body=(guidance.length?`<p class="note">${guidance.map(e).join(' ')}</p>`:'')+
+    body=trialInstructions(draft.test)+(!draft.test&&guidance.length?`<p class="note">${guidance.map(e).join(' ')}</p>`:'')+
       form('brew-plan',planDisplay(planned,gear)+
       (!isCapsule(gear)?`<p class="small">${e(recipeReason(planned))} The cup target is the dose multiplied by the ratio.</p>`:'')+
       details('Puck preparation',preparation)+(recipeInputs?details('Recipe settings',recipeInputs):'')+
       '<p class="small section-gap" id="planned-preview" hidden></p>'+
-      actions(submit('Start brewing')+go(2)));
+      actions(submit('Start brewing')+(draft.coachUndo?btn('Undo','undo-planned-change','','ghost'):'')+(draft.test?link('My equipment','equipment/brew','ghost'):go(2))));
   }else{
     body=`<p>Your results are in History.</p>`+actions(link('Open shot','shot/'+draft.savedId,'primary')+btn('Pull another shot','new-shot',draft.savedId)+link('Dashboard','home','ghost'));
   }
-  const title=titles[step-1]||'Shot saved';
-  return `<div class="brew-layout">${panel(`<h1>${title}</h1>${body}`,'guide')}
+  const title=step===3&&draft.test?'Test shot recipe':titles[step-1]||'Shot saved';
+  return `<div class="brew-layout">${panel(`<h1>${title}</h1>${body}${step<8?shotNavigation():''}`,'guide')}
     <aside class="stack aside">
       ${bag?panel(`<h2>${e(bagName(bag))}</h2><p class="small">${bag.roastLevel?`${e(bag.roastLevel)} roast · `:''}${e(ageLine(bag))}${portion?` · ${e(portion.name)}`:''}</p>`):''}
       ${step>=3 && previous?panel(`<h2>Previous attempt</h2><p class="small">${e(previous.day)} · ${e(previous.tastes.join(', ')||'Taste unrecorded')}</p>
       ${previous.change?`<p class="small">Changed: ${e(previous.change)}</p>`:''}${link('View attempt','shot/'+previous.id,'ghost')}`):''}</aside></div>`;
 }
-export function pourView(draft){
+export function pourView(draft,animate=false){
   const grams=targetYield(draft.planned?.dose,draft.planned?.ratio);
-  return panel(heading('Brewing')+`<div class="pour-scene" aria-hidden="true">
+  return panel(heading('Brewing')+`<div class="pour-scene${animate?' is-pouring':''}" aria-hidden="true">
     <div class="mp-window"></div><div class="mp-lamp"></div>
     <div class="mp-brewer"><div class="mp-backplate"></div><div class="mp-copper"></div><div class="mp-head"></div>
     <div class="mp-cup-handle"></div><div class="mp-cup"></div><div class="mp-stream"></div><div class="mp-tray"></div></div></div>
-    ${grams!==null && !isCapsule(draft.gear??{})?`<p class="pour-target">Target yield · ${measure(grams,'g')}</p>`:''}
+    ${trialInstructions(draft.test)}
+    ${!draft.test && grams!==null && !isCapsule(draft.gear??{})?`<p class="pour-target">Target yield · ${measure(grams,'g')}</p>`:''}
     <p class="small">The pour is an illustration. Use your machine and cup target to decide when to stop.</p>
-    ${btn('Ready to taste','finish-pour','','primary finish-pour')}`,'pour-panel');
+    ${draft.test?planDisplay(draft.planned,draft.gear):''}${btn('Ready to taste','finish-pour','','primary finish-pour')}${shotNavigation()}`,'pour-panel');
 }

@@ -93,7 +93,8 @@ test('result renders useful advice and optional save; diagnostics render without
   assert.match(diagnostic,/Diagnostic check/);
   assert.doesNotMatch(diagnostic,/Undo|Next proposed recipe|One change to try/);
   assert.equal(nextBaseline({...planned,grind:'Previously change grind'}).grind,undefined);
-  assert.match(diagnostic,/Report what happened/);
+  assert.match(diagnostic,/Brew a test shot/);
+  assert.doesNotMatch(diagnostic,/Report what happened/);
   assert.doesNotMatch(diagnostic,/Brew with the same recipe/);
 });
 
@@ -182,4 +183,55 @@ test('changing conflicting answers invalidates only dependent observations',()=>
   const diluted=shot('Weak','Fast',{actual:{dose:18,yieldG:50},answers:{even:'yes'}});
   assert.match(diluted.change,/47.3 g/);
   assert.ok(!diluted.patch.grind);
+});
+
+test('fast preset-machine shots use the reported sharp or weak taste to recommend a specific next brew',()=>{
+  const automatic={machine:'Automatic / bean-to-cup',basket:'Built-in basket',stop:'Preset or automatic only'};
+  assert.equal(shot(undefined,'Fast',{gear:automatic}).key,'taste');
+  for(const [taste,description] of [['Sour',/tasted sharp/],['Weak',/tasted thin/]]){
+    const advice=shot(taste,'Fast',{gear:automatic,actual:{}});
+    assert.equal(advice.kind,'diagnostic');
+    assert.match(advice.because,description);
+    assert.match(advice.change,/shorter espresso setting/);
+    assert.equal(advice.test,true);
+    assert.notEqual(advice.report,'taste');
+  }
+});
+
+test('flat taste consumes an aroma answer with or without a tracked bean bag',()=>{
+  for(const bag of [undefined,{method:'Original bag'}]){
+    assert.equal(shot('Other','Steady',{bag,actual:{}}).key,'aroma');
+    for(const aroma of ['yes','no','unknown']){
+      const advice=shot('Other','Steady',{bag,actual:{},answers:{aroma}});
+      assert.equal(advice.kind,'diagnostic');
+      assert.notEqual(advice.report,'aroma');
+      assert.match(advice.change,aroma==='yes'?/another portion/:/Warm up/);
+    }
+  }
+});
+
+test('weighing the next cup carries instructions into brewing before showing a fresh report',()=>{
+  const state={bags:[],shots:[],preferences:{}};
+  const advice=shot('Weak','Steady',{actual:{},answers:{noYield:true}});
+  assert.equal(advice.title,'Weigh the next cup');
+  const test={title:advice.title,instruction:advice.change,keep:advice.keep,report:advice.report};
+  const recipe={gear,planned,test};
+  for(const markup of [brewView({...recipe,step:3},state),brewView({...recipe,step:5,pouring:true},state)]){
+    assert.match(markup,/Weigh the next cup[\s\S]*Place a scale under the cup[\s\S]*36 g/);
+    assert.doesNotMatch(markup,/Report what happened|Sources|Elapsed time/);
+  }
+  const report=coachScreen({origin:recipe,screen:'test-result',actual:{},gear,answers:{}},state,null,null,false);
+  assert.match(report,/Report what happened[\s\S]*Espresso in the cup/);
+  assert.doesNotMatch(report,/name="yieldG" value="36"/);
+});
+
+test('dashboard always offers a fresh shot and continues only unfinished drafts',()=>{
+  for(const draft of [null,{step:3},{step:6,savedId:'shot-1'},{step:8}]){
+    const markup=home({draft,equipment:{}});
+    assert.match(markup,/Start a new shot/);
+    assert.match(markup,/My equipment/);
+    assert.equal(markup.includes('Continue current shot'),draft?.step===3);
+    assert.match(markup,/Skip for now/);
+  }
+  assert.doesNotMatch(home({equipment:{},equipmentSetupSkipped:true}),/Skip for now/);
 });

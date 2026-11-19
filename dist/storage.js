@@ -43,7 +43,7 @@ export function importData(value) {
   const shotIds = new Set(value.shots.map(s=>s.id));
   if (value.shots.some(s=> (s.bagId && !bagMap.has(s.bagId)) || (s.portionId && !bagMap.get(s.bagId)?.portions.some(p=>p.id===s.portionId)) ||
     (s.parentId && (s.parentId===s.id || !shotIds.has(s.parentId))))) throw new Error('This backup has a shot linked to a missing bag, portion, or attempt.');
-  return {...emptyState(),bags:value.bags,shots:value.shots,recipes:value.recipes,equipment:value.equipment,
+  return {...emptyState(),bags:value.bags,shots:value.shots,recipes:value.recipes,equipment:value.equipment,equipmentSetupSkipped:value.equipmentSetupSkipped===true,
     preferences:Object.fromEntries(['sound','vibrate','wake'].map(k=>[k,value.preferences?.[k]===true]))};
 }
 

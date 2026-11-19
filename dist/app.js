@@ -5,7 +5,7 @@ import {chatCapability,shotContext,sendChat} from './chat.js';
 import {EQUIPMENT,emptyState,id,positive,localDate,age,bagDateError,storageDateError,ratioOf,targetYield,extraction,scaleItems,isCapsule,startingRecipe,labelSuggestions} from './core.js';
 import {load,persist,importData} from './storage.js';
 import {SYRUPS,drinks,milkFor,matchImportedRecipe} from './recipes.js';
-import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment} from './ui.js';
+import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment,unfinishedShot} from './ui.js';
 import * as view from './views.js';
 import {offlineMessages,prepareOffline} from './offline.js';
 import {recipeURL,parseRecipeText,loadRecipeLink,recipeUnits} from './recipe-import.js';
@@ -22,7 +22,7 @@ const numeric = (fields,key) => {
   const value=clean(fields,key);
   return value && Number.isFinite(Number(value)) ? Number(value) : null;
 };
-const gearFrom = f => ({...Object.fromEntries(Object.keys(EQUIPMENT).filter(key=>f.has(key)||Object.hasOwn(state.equipment,key)).map(key=>[key,f.has(key)?clean(f,key)||'Not sure':state.equipment[key]])),ratedDose:numeric(f,'ratedDose')});
+const gearFrom = f => ({...Object.fromEntries(Object.keys(EQUIPMENT).filter(key=>f.has(key)||Object.hasOwn(state.equipment,key)).map(key=>[key,f.has(key)?clean(f,key)||'Not sure':state.equipment[key]])),ratedDose:f.has('ratedDose')?numeric(f,'ratedDose'):state.equipment.ratedDose??null});
 const actualFrom = f => ({dose:numeric(f,'dose'),yieldG:numeric(f,'yieldG'),seconds:numeric(f,'seconds'),tds:numeric(f,'tds'),timing:clean(f,'timing')||'unknown'});
 const tasteFrom = f => ({tastes:f.getAll('taste'),flows:f.getAll('flow'),rating:numeric(f,'rating'),note:clean(f,'note'),change:clean(f,'change'),detail:''});
 const snapshot = (bag,portion) => ({
@@ -31,6 +31,7 @@ const snapshot = (bag,portion) => ({
 });
 let state=emptyState();
 let quickPouring=false;
+let animatePour=false;
 let directCoach=null;
 let brewCoach=null;
 let drinkOptions={...view.defaultDrink};
@@ -75,17 +76,52 @@ async function commit(update) {
   state=next;
 }
 const commitDraft = fields => commit({draft:{...state.draft,...fields}});
-function newDraft(parent=null) {
-  const gear={...(hasEquipment(state.equipment)?state.equipment:parent?.gear)};
-  const bag=state.bags.find(b=>b.id===parent?.bagId);
+function newDraft(parent=null,coffee=state.draft) {
+  const gear={...(hasEquipment(state.equipment)?state.equipment:(parent??coffee)?.gear)};
+  const bag=getBag((parent??coffee)?.bagId);
   const goal=parent?.goal ?? 'Balanced';
   const planned=parent?{...parent.planned,basis:'repeat',
     dose:isCapsule(gear)?null:parent.planned.dose,
     temperature:gear.temperature==='Adjustable'?parent.planned.temperature:null,
     preInfusion:gear.infusion==='Adjustable'?parent.planned.preInfusion:null
-  }:startingRecipe(gear,bag,goal);
-  return {step:parent?3:1,gear,goal,planned,actual:emptyActual(),bagId:bag?.id??'',portionId:bag?.id?parent?.portionId??'':'',
+  }:startingRecipe(gear,bag,goal,state.shots,(parent??coffee)?.portionId);
+  return {step:parent?3:1,gear,goal,planned,actual:emptyActual(),bagId:bag?.id??'',portionId:bag?.id?(parent??coffee)?.portionId??'':'',
     parentId:parent?.id??'',savedId:'',...view.freshTaste()};
+}
+const pendingBrew = draft => draft && (draft.step<5 || draft.step===5 && !draft.pouring && draft.timer?.startedAt==null);
+const unfinishedCoach = () => Boolean(directCoach && !directCoach.savedId);
+function planFor(draft,gear){
+  return startingRecipe(gear,getBag(draft.bagId),draft.goal,state.shots,draft.portionId);
+}
+async function saveEquipment(gear,goal=state.draft?.goal){
+  const old=state.equipment;
+  if(old.machine&&old.machine!=='Not sure'&&gear.machine!==old.machine){
+    for(const key of ['basket','ratedDose','temperature','infusion','timer','tamper','distribution']){
+      if(gear[key]===old[key]) delete gear[key];
+    }
+  }
+  if(gear.basket!==old.basket&&gear.ratedDose===old.ratedDose) delete gear.ratedDose;
+  if(gear.machine==='Automatic / bean-to-cup'||gear.machine==='Capsule machine'){
+    gear.basket=gear.machine==='Capsule machine'?'Capsule':'Built-in basket';
+    gear.ratedDose=null;
+  }else if(['Built-in basket','Capsule'].includes(gear.basket) && gear.machine!==old.machine){
+    gear.basket='Not sure';
+    gear.ratedDose=null;
+  }
+  const draft=state.draft;
+  const changed=Object.keys({...old,...gear}).some(key=>(old[key]??null)!==(gear[key]??null));
+  const replan=pendingBrew(draft)&&(changed||goal!==draft.goal);
+  const update=replan?{draft:{...draft,goal,gear,planned:planFor({...draft,goal},gear),test:null,coachUndo:null}}:{};
+  await commit({equipment:gear,...update});
+  if(changed&&unfinishedCoach()){
+    for(const key of Object.keys(equipmentQuestions)) delete directCoach.answers[key];
+    for(const key of ['basketFit','basketCondition','doseFit','equipmentIssue','warm','repeat','interruption']) delete directCoach.answers[key];
+    directCoach.gear=gear;
+    directCoach.planned=planFor({...directCoach,goal:'Balanced'},gear);
+    directCoach.question=null;
+    directCoach.trail=[];
+    directCoach.undone=false;
+  }
 }
 const allRecipes = () => [...state.recipes,...SYRUPS,...drinks(drinkOptions)];
 const getRecipe = key => {
@@ -120,12 +156,13 @@ function render(focus=false) {
   let content;
   activeRecipe=null;
   switch(home){
-    case 'home': content=view.home(state); break;
+    case 'home': content=view.home(state,unfinishedCoach()); break;
     case 'brew':
       content=state.draft && [6,7].includes(state.draft.step)?renderCoach(false):
-        state.draft?brewView(state.draft,state,editingEquipment):heading('Pull a shot')+link('Dashboard','home','ghost');
+        state.draft?brewView(state.draft,state,editingEquipment,animatePour):heading('Pull a shot')+link('Dashboard','home','ghost');
       break;
-    case 'timer': content=view.quickBrew(quickPouring); break;
+    case 'timer': content=view.quickBrew(quickPouring,animatePour); break;
+    case 'equipment': content=view.equipmentView(state.equipment,key); break;
     case 'calculator': content=view.calculator(); break;
     case 'coach': content=renderCoach(true); break;
     case 'beans': case 'beans-archived': content=view.beansView(state,home==='beans-archived'); break;
@@ -153,6 +190,7 @@ function render(focus=false) {
     default: content=view.home(state);
   }
   main.innerHTML=content;
+  animatePour=false;
   if(home==='calculator') refreshCalculation(main.querySelector('form'));
   if(home==='coach') void showChat();
   if(focus || (home==='brew' && previousStep!==state.draft?.step)){
@@ -191,10 +229,10 @@ function activeSession(){
   const recorded=origin?.actual??emptyActual();
   const actual=recorded.timeSource==='manual'?{...recorded}:{...recorded,seconds:null,timing:'unknown'};
   const session={
-    origin,gear,bagId,portionId:origin?.portionId??'',screen:direct||origin?.quickLog?'notice':'start',
+    origin,gear,bagId,portionId:origin?.portionId??'',screen:origin?.test?'test-result':direct||origin?.quickLog?'notice':'start',
     planned:origin?.planned??startingRecipe(gear,null,'Balanced'),actual,
     answers:{taste:origin?.tastes?.includes('Sour')&&origin?.tastes?.some(t=>t==='Bitter'||t==='Dry')?'Mixed':origin?.tastes?.[0],flow:origin?.flows?.find(f=>!['Not sure','Inconsistent'].includes(f))?.replace('Spraying','Uneven')},
-    undone:false,note:origin?.note??'',savedId:''
+    undone:false,note:origin?.note??'',...structuredClone(origin?.coach),savedId:origin?.savedId??''
   };
   if(direct) directCoach=session;
   else brewCoach=session;
@@ -318,20 +356,26 @@ async function saveCoachResult(session){
     bagId:bag?.id??'',portionId:portion?.id??'',parentId:parent?.id??'',goal:session.origin?.goal??'Balanced',
     note:session.note,change:session.origin?.change??'',detail:'',bag:snapshot(bag,portion),gear:coachGear(session.gear,session.answers),
     planned:{...session.planned},...coachingRecord(session),rating:session.origin?.rating??null,favorite:false,advice};
-  await commit({shots:[entry,...state.shots]});
+  const savedDraft=session.origin?{...state.draft,savedId:entry.id,coach:coachProgress(session)}:null;
+  await commit({shots:[entry,...state.shots],...(savedDraft?{draft:savedDraft}:{})});
+  if(savedDraft) session.origin=state.draft;
   session.savedId=entry.id;
 }
 async function useCoachRecipe(session){
   const advice=coachOutcome(session);
   if(advice.kind==='question') return;
-  if(!session.origin && state.draft && state.draft.step<8 &&
+  if(!session.origin && unfinishedShot(state.draft) &&
       !window.confirm('Use this recipe in place of the unfinished walkthrough?')) return;
   const baseline=nextBaseline(session.planned);
   const draft=newDraft();
   const patch=session.undone?null:advice.patch;
+  const test=advice.test||patch?{title:advice.title,instruction:advice.change,keep:advice.keep,report:advice.report}:null;
   const planned={...baseline,...patch,...(patch?.ratio?{basis:'coach'}:{})};
   await commit({draft:{...draft,step:3,bagId:session.bagId,portionId:session.portionId,gear:coachGear(session.gear,session.answers),planned,
-    actual:emptyActual(),goal:session.origin?.goal??draft.goal,parentId:session.savedId||session.origin?.parentId||''}});
+    actual:emptyActual(),test,coachUndo:patch?baseline:null,goal:session.origin?.goal??draft.goal,
+    parentId:session.savedId||session.origin?.parentId||''}});
+  if(!session.origin) directCoach=null;
+  brewCoach=null;
   jump('brew');
 }
 function exportBackup(){
@@ -451,7 +495,7 @@ async function submitForm(node) {
     case 'brew-gear': {
       const goal=clean(f,'goal');
       if(f.has('machine')){
-        await commit({equipment:gearFrom(f),draft:{...state.draft,goal}});
+        await saveEquipment(gearFrom(f),goal);
         editingEquipment=false;
         toast('Equipment saved.');
       }else{
@@ -472,8 +516,23 @@ async function submitForm(node) {
       const edited=cup!==null&&cup!==targetYield(old.dose,old.ratio)||dose!==old.dose;
       const planned={...old,dose,ratio,timing:'unknown',temperature:numeric(f,'temperature'),...(edited?{basis:'custom'}:{})};
       const {timer,cue,...rest}=draft;
-      await commit({draft:{...rest,step:5,pouring:true,planned,actual:emptyActual()}});
+      await commit({draft:{...rest,step:5,pouring:true,planned,coachUndo:null,actual:emptyActual()}});
+      animatePour=true;
       break;
+    }
+    case 'coach-test-result': {
+      const session=activeSession();
+      rememberCoachStep(session);
+      session.actual=actualFrom(f);
+      const answers=session.answers;
+      updateCoachAnswer(answers,'taste',clean(f,'taste'));
+      updateCoachAnswer(answers,'flow',clean(f,'flow'));
+      answers.noYield=session.actual.yieldG===null;
+      answers.noDose=session.actual.dose===null;
+      session.question=null;
+      session.undone=false;
+      session.screen='evaluate';
+      await finishCoachStep();return;
     }
     case 'coach-measure': {
       const session=activeSession();
@@ -485,7 +544,7 @@ async function submitForm(node) {
       delete session.answers[question.key==='yield'?'noYield':'noDose'];
       session.question=null;
       session.undone=false;
-      render(true);return;
+      await finishCoachStep();return;
     }
     case 'coach-time': {
       const session=activeSession();
@@ -495,12 +554,12 @@ async function submitForm(node) {
       delete session.answers.noTime;
       session.question=null;
       session.undone=false;
-      render(true);return;
+      await finishCoachStep();return;
     }
     case 'coach-note':
       rememberCoachStep(activeSession());
       setCoachNote(activeSession(),clean(f,'note'));
-      render(true);return;
+      await finishCoachStep();return;
     case 'coach-context': {
       const session=activeSession();
       session.bagId=clean(f,'bagId');
@@ -512,17 +571,16 @@ async function submitForm(node) {
         delete session.answers.aroma;
       }
       previousCoachStep(session);
-      render(true);return;
+      await finishCoachStep();return;
     }
     case 'gear':
-      await commit({equipment:gearFrom(f)});
-      if(directCoach){
-        directCoach.gear=state.equipment;
-        directCoach.planned=startingRecipe(state.equipment,getBag(directCoach.bagId),'Balanced');
-        directCoach.undone=false;
-      }
+      await saveEquipment(gearFrom(f));
       editingEquipment=false;
-      toast('Equipment saved.');
+      toast(pendingBrew(state.draft)?'Equipment saved. Your recipe uses this setup.':'Equipment saved.');
+      if(page==='equipment'){
+        jump(key==='brew'?'brew':'home');
+        return;
+      }
       break;
     case 'bag-edit': {
       const old=page==='bag-edit'?getBag(key):null;
@@ -669,6 +727,7 @@ async function doAction(el){
     }
     case 'start-quick':
       quickPouring=true;
+      animatePour=true;
       render(true);return;
     case 'finish-pour': await finishPour(route()[0]==='timer');return;
     case 'coach-clear-time': {
@@ -680,15 +739,27 @@ async function doAction(el){
       session.answers.noTime=true;
       session.question=null;
       session.undone=false;
-      render(true);return;
+      await finishCoachStep();return;
     }
     case 'coach-checked-clean': {
       const session=activeSession();
       updateCoachAnswer(session.answers,'basketCondition','clean');
       session.question=null;
       session.undone=false;
-      render(true);return;
+      await finishCoachStep();return;
     }
+    case 'plan-without-gear': {
+      const goal=clean(new FormData(el.form),'goal');
+      await commitDraft({step:3,goal,gear:{...state.equipment},planned:planFor({...state.draft,goal},state.equipment)});
+      break;
+    }
+    case 'skip-equipment':
+      await commit({equipmentSetupSkipped:true});
+      jump('home');
+      return;
+    case 'undo-planned-change':
+      await commitDraft({planned:stateDraft.coachUndo,coachUndo:null,test:null});
+      break;
     case 'equipment-edit':
       editingEquipment=true;
       render();
@@ -710,26 +781,30 @@ async function doAction(el){
            EQUIPMENT[capability].includes(key) && state.equipment[capability]!==key){
           await commit({equipment:coachGear(state.equipment,{[capability]:key})});
         }
-      } finally { render(true); }
+      } finally { await finishCoachStep(); }
       return;
     }
-    case 'coach-undo': activeSession().undone=true;render(true);return;
-    case 'coach-back': previousCoachStep(activeSession());render(true);return;
+    case 'coach-undo': activeSession().undone=true;await finishCoachStep();return;
+    case 'coach-back': previousCoachStep(activeSession());await finishCoachStep();return;
     case 'coach-edit': {
       const session=activeSession();
       rememberCoachStep(session);
       session.screen='edit';
       session.question=null;
-      render(true);return;
+      await finishCoachStep();return;
     }
     case 'coach-report': case 'coach-edit-item':
-      editCoachItem(activeSession(),key);render(true);return;
-    case 'coach-save': await saveCoachResult(activeSession());render(true);return;
+      editCoachItem(activeSession(),key);await finishCoachStep();return;
+    case 'coach-save': await saveCoachResult(activeSession());await finishCoachStep();return;
     case 'coach-try': await useCoachRecipe(activeSession());return;
     case 'new-shot': case 'repeat': {
-      if(name==='repeat' && stateDraft && stateDraft.step<8 && !window.confirm('Replace your unfinished walkthrough with a repeat of this recipe?')) return;
-      const parent=getShot(key);
-      await commit({draft:newDraft(parent)});
+      if((unfinishedShot(stateDraft)||unfinishedCoach()||quickPouring) &&
+        !window.confirm('Start a new shot? Your unfinished attempt will be discarded.')) return;
+      const coffee=route()[0]==='coach'?activeSession():stateDraft;
+      await commit({draft:newDraft(getShot(key),coffee)});
+      directCoach=null;
+      brewCoach=null;
+      quickPouring=false;
       jump('brew');
       return;
     }
@@ -899,6 +974,21 @@ async function selectBagPhoto(input) {
   } finally {
     if(form.isConnected&&request===photoRequest) save.disabled=false;
   }
+}
+const coachProgress = ({screen,actual,answers,undone,note,question,trail,noteKind,noteKey,noteChoice,bagId,portionId}) => structuredClone({
+  screen,actual,answers,undone,note,question,trail,noteKind,noteKey,noteChoice,
+  bagId,portionId
+});
+async function persistBrewCoach(){
+  if(!brewCoach||brewCoach.origin!==state.draft) return;
+  const coach=coachProgress(brewCoach);
+  if(JSON.stringify(coach)===JSON.stringify(state.draft.coach)) return;
+  await commitDraft({coach});
+  brewCoach.origin=state.draft;
+}
+async function finishCoachStep(){
+  if(route()[0]==='brew'&&storageReady) await persistBrewCoach();
+  render(true);
 }
 async function perform(work,node) {
   if(busy) return;
