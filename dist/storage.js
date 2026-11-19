@@ -32,7 +32,7 @@ const validShot = s => record(s) && ['id','createdAt','updatedAt','day','bagId',
 const validRecipe = r => record(r) && text(r.id) && text(r.name) && Boolean(r.name.trim()) && ['syrup','drink'].includes(r.kind) &&
   Array.isArray(r.items) && r.items.length>0 && r.items.every(i=>record(i) && text(i.name) && Boolean(i.name.trim()) && (i.amount===null?r.imported===true&&i.unit==='':positive(i.amount,100000)&&recipeUnits.includes(i.unit))) &&
   validOriginal(r.originalURL) && (r.yieldText===undefined||text(r.yieldText)) &&
-  strings(r.steps) && r.steps.length>0 && typeof r.favorite==='boolean';
+  (r.cupSteps===undefined||strings(r.cupSteps)) && strings(r.steps) && r.steps.length>0 && typeof r.favorite==='boolean';
 const unique = rows => new Set(rows.map(row=>row.id)).size===rows.length;
 
 export function importData(value) {

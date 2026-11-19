@@ -1,4 +1,4 @@
-const VERSION = 'morning-pull-0.1.0-test.3';
+const VERSION = 'morning-pull-0.1.0-test.4';
 const OCR_CACHE = VERSION+'-ocr';
 const CORE = [
   './','./offline.js','./version.js','./style.css','./app.js','./core.js','./storage.js','./ui.js','./views.js','./recipes.js','./recipe-import.js','./chat.js','./espresso-coach.js','./coach-ui.js','./selection.js',

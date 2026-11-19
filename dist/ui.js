@@ -175,6 +175,6 @@ export function pourView(draft,animate=false){
     <div data-brew-controls>${brewControls(draft)}</div>
     ${trialInstructions(draft.test)}
     ${draft.test?`<p class="small" data-edited-target${draft.targetEdited?'':' hidden'}>The target above reflects your edit. The coach’s original suggestion is shown for reference.</p>`:''}
-    ${btn('Ready to taste','finish-pour','','primary finish-pour')}
+    ${actions(btn('Ready to taste','finish-pour','','primary')+btn('Make a drink','make-brewed-drink','','ghost'))}
     ${draft.prepChecked?.length?details('Prep checklist',prepChecklist(draft,draft.planned,false)):''}${shotNavigation()}`,'pour-panel');
 }

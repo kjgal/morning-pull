@@ -4,7 +4,7 @@ import { coachScreen, followQuestions, nextBaseline } from './coach-ui.js';
 import {chatCapability,shotContext,sendChat} from './chat.js';
 import {EQUIPMENT,emptyState,id,positive,localDate,age,bagDateError,storageDateError,ratioOf,targetYield,extraction,scaleItems,isCapsule,startingRecipe,labelSuggestions,prepSteps,validTimerTarget,shotClock,measuredShotTime,round} from './core.js';
 import {load,persist,importData} from './storage.js';
-import {SYRUPS,drinks,milkFor,matchImportedRecipe} from './recipes.js';
+import {SYRUPS,drinks,milkFor,matchImportedRecipe,brewedDrinkChoices,MILK_PREFERENCES} from './recipes.js';
 import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment,unfinishedShot,brewControls,planDisplay} from './ui.js';
 import * as view from './views.js';
 import {offlineMessages,prepareOffline} from './offline.js';
@@ -37,8 +37,10 @@ let directCoach=null;
 let brewCoach=null;
 let drinkOptions={...view.defaultDrink};
 try {
-  const remembered=JSON.parse(sessionStorage.getItem('morning-pull-drinks'));
+  const remembered=JSON.parse(localStorage.getItem('morning-pull-drinks')??sessionStorage.getItem('morning-pull-drinks'));
   if(remembered && Array.isArray(remembered.pantry)) drinkOptions={...drinkOptions,...remembered};
+  if(!MILK_PREFERENCES.includes(drinkOptions.milk)) drinkOptions.milk='No preference';
+  if(drinkOptions.diet==='Dairy-free'&&MILK_PREFERENCES.indexOf(drinkOptions.milk)>=2) drinkOptions.milk=milkFor(drinkOptions.milk,drinkOptions.diet);
 } catch {}
 let restoreCandidate=null;
 let selection=new Set();
@@ -133,7 +135,7 @@ const getBag = key => state.bags.find(b=>b.id===key);
 const getShot = key => state.shots.find(s=>s.id===key);
 const recentFor = bagId => bagId ? state.shots.find(s=>s.bagId===bagId) : null;
 const navGroup = page => /^(bean|bag|portion|refreeze)/.test(page) ? 'beans' : /^(history|shot|compare|favorites)/.test(page) ? 'history' :
-  /^(recipes?|drinks)/.test(page) ? 'recipes' : ['brew','timer','coach','calculator'].includes(page)?'brew':page;
+  /^(recipes?|drinks)/.test(page) ? 'recipes' : ['brew','timer','coach','calculator','brew-drinks','brew-drink'].includes(page)?'brew':page;
 
 function render(focus=false) {
   const [page='home',key,part]=route();
@@ -174,6 +176,17 @@ function render(focus=false) {
     case 'shot': content=shot?view.shotView(shot,state):unavailable; break;
     case 'shot-edit': content=shot?view.shotEdit(shot):unavailable; break;
     case 'compare': content=view.compareView(state.shots.filter(s=>selection.has(s.id))); break;
+    case 'brew-drinks':
+    case 'brew-drink': {
+      if(!brewingShot(key)){
+        content=heading('Make a drink')+link('Back to dashboard','home','ghost');
+        break;
+      }
+      const picks=brewedDrinkChoices(state.recipes,drinkOptions);
+      const recipe=[...picks.favorites,...picks.suggestions].find(r=>r.id===part)??selectedCupRecipe(part);
+      content=home==='brew-drink'&&recipe?view.brewedDrinkRecipe(recipe,key):view.brewedDrinkPicker(picks,key);
+      break;
+    }
     case 'drinks': case 'recipes': case 'recipe-favorites': content=view.recipeHome(state,home==='recipes'?'syrups':home==='drinks'?'drinks':'favorites',drinkOptions); break;
     case 'recipe':
       activeRecipe=getRecipe(key);
@@ -334,7 +347,19 @@ async function showChat(){
       <p class="error" role="alert" hidden></p><p class="small" id="chat-reply" aria-live="polite"></p>
     </form></details>`;
 }
-const currentPour = () => route()[0]==='timer'?quickPouring:route()[0]==='brew'&&state.draft?.step===5?state.draft:null;
+function brewingShot(page){
+  if(page==='timer') return quickPouring;
+  const draft=state.draft;
+  return page==='brew'&&draft?.step===5&&(draft.pouring||draft.timer?.startedAt!=null)?draft:null;
+}
+const currentPour = () => brewingShot(route()[0]);
+function selectedCupRecipe(key){
+  const saved=state.recipes.find(r=>r.id===key);
+  if(!saved) return null;
+  const choices=brewedDrinkChoices([{...saved,favorite:true}],drinkOptions);
+  const recipe=choices.favorites[0];
+  return recipe?{...recipe,favorite:saved.favorite}:null;
+}
 async function updatePour(fields){
   if(route()[0]==='timer') quickPouring={...quickPouring,...fields};
   else await commitDraft(fields);
@@ -821,6 +846,9 @@ async function doAction(el){
       await finishCoachStep();
       return;
     }
+    case 'make-brewed-drink':
+      if(currentPour()) jump('brew-drinks/'+route()[0]);
+      return;
     case 'finish-pour': await finishPour(route()[0]==='timer');return;
     case 'coach-clear-time': {
       const session=activeSession();
@@ -940,13 +968,17 @@ async function doAction(el){
       render(true);
       return;
     case 'favorite-recipe': {
-      const recipe=getRecipe(key);
+      const [page,where]=route();
+      const fromCup=['brew-drink','brew-drinks'].includes(page);
+      const saved=state.recipes.find(r=>r.id===key);
+      const picks=fromCup?brewedDrinkChoices(state.recipes,drinkOptions):null;
+      const recipe=saved??(fromCup?picks.suggestions.find(r=>r.id===key):getRecipe(key));
       if(!recipe) return;
-      const saved=state.recipes.some(r=>r.id===key);
       const {missing,unchecked,...base}=recipe;
       const next={...base,id:saved?key:id(),favorite:!recipe.favorite};
       await commit({recipes:saved?state.recipes.map(r=>r.id===key?next:r):[next,...state.recipes]});
-      jump('recipe/'+next.id);
+      if(page==='brew-drinks') render();
+      else jump(page==='brew-drink'?'brew-drink/'+where+'/'+next.id:'recipe/'+next.id);
       return;
     }
     case 'delete-recipe':
@@ -1010,9 +1042,9 @@ async function doAction(el){
 }
 function refreshDrinks(form) {
   const f=new FormData(form);
-  const next={...Object.fromEntries(['temp','milk','diet','sweet','strength','otherSyrup'].map(k=>[k,clean(f,k)])),pantry:f.getAll('pantry')};
+  const next={...drinkOptions,...Object.fromEntries(['temp','milk','sweet','strength','otherSyrup'].map(k=>[k,clean(f,k)])),pantry:f.getAll('pantry')};
   const effectiveMilk=milkFor(next.milk,next.diet);
-  if(next.milk!==effectiveMilk){
+  if(next.milk!=='No preference'&&next.milk!==effectiveMilk){
     const field=form.elements.milk;
     field.value=effectiveMilk;
     field.parentElement.querySelector('.selection-trigger span').textContent=effectiveMilk;
@@ -1023,7 +1055,7 @@ function refreshDrinks(form) {
     next.pantry=next.pantry.filter(key=>key!=='milk');
   }
   drinkOptions=next;
-  try { sessionStorage.setItem('morning-pull-drinks',JSON.stringify(drinkOptions)); } catch {}
+  try { localStorage.setItem('morning-pull-drinks',JSON.stringify(drinkOptions)); } catch {}
   main.querySelector('#drink-suggestions').innerHTML=view.drinkSuggestions(drinkOptions);
   main.querySelector('#saved-drinks').innerHTML=view.savedDrinkCards(state.recipes,drinkOptions);
   main.querySelector('#drink-update').textContent=`${drinkOptions.temp} drink suggestions updated.`;
