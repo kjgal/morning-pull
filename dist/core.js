@@ -26,14 +26,18 @@ export const ratioOf = (dose,yieldG) => positive(dose) && positive(yieldG) ? yie
 export const targetYield = (dose,ratio) => positive(dose) && positive(ratio) ? dose * ratio : null;
 export const validTimerTarget = seconds => Number.isInteger(seconds) && positive(seconds,3600);
 export const measuredShotTime = actual => ['manual','timer'].includes(actual?.timeSource);
-export function shotClock(clock,targetSeconds,now=Date.now()){
+export function shotClock(clock,now=Date.now()){
   if(!Number.isFinite(clock?.startedAt)) return null;
   const running=clock.stoppedAt==null;
   const elapsed=Math.max(0,((running?now:clock.stoppedAt)-clock.startedAt)/1000);
-  return {running,elapsed,remaining:Math.max(0,Math.ceil(targetSeconds-elapsed)),reached:elapsed>=targetSeconds};
+  return {running,elapsed};
+}
+export function shotClockLabel(elapsed=0){
+  const seconds=Math.floor(elapsed);
+  return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
 }
 export function pourAnimation(draft,clock,now){
-  if(clock) return clock.running&&!clock.reached?{mode:'timed',elapsed:clock.elapsed}:null;
+  if(clock) return clock.running?{mode:'timed',elapsed:clock.elapsed}:null;
   const elapsed=Math.max(0,(now-draft.decorativeStartedAt)/1000);
   return elapsed<4?{mode:'decorative',elapsed}:null;
 }

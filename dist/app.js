@@ -3,10 +3,10 @@ import {createConfirmation} from './confirmation.js';
 import { coachGear, equipmentQuestions, evaluateEspresso, openings, updateCoachAnswer } from './espresso-coach.js';
 import { coachScreen, followQuestions, nextBaseline } from './coach-ui.js';
 import {chatCapability,shotContext,sendChat} from './chat.js';
-import {EQUIPMENT,emptyState,id,positive,localDate,age,bagDateError,storageDateError,ratioOf,targetYield,extraction,scaleItems,isCapsule,startingRecipe,labelSuggestions,prepSteps,validTimerTarget,shotClock,pourAnimation,measuredShotTime,round} from './core.js';
+import {EQUIPMENT,emptyState,id,positive,localDate,age,bagDateError,storageDateError,ratioOf,targetYield,extraction,scaleItems,isCapsule,startingRecipe,labelSuggestions,prepSteps,shotClock,shotClockLabel,pourAnimation,measuredShotTime,round} from './core.js';
 import {load,persist,importData} from './storage.js';
 import {SYRUPS,drinks,milkFor,matchImportedRecipe,brewedDrinkChoices,MILK_PREFERENCES} from './recipes.js';
-import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment,unfinishedShot,brewControls,brewTimer,planDisplay} from './ui.js';
+import {e,heading,link,metric,error,bagName,measure,displayRatio,brewView,hasEquipment,unfinishedShot,brewControls,brewTimerAction,planDisplay} from './ui.js';
 import * as view from './views.js';
 import {offlineMessages,prepareOffline} from './offline.js';
 import {recipeURL,parseRecipeText,loadRecipeLink,recipeUnits} from './recipe-import.js';
@@ -368,18 +368,11 @@ function refreshBrewClock(){
   const art=main.querySelector('.pour-art');
   if(!draft||!art) return;
   const elapsed=main.querySelector('[data-elapsed]');
-  const countdown=main.querySelector('[data-countdown]');
-  const cue=main.querySelector('[data-clock-cue]');
   const tick=()=>{
     const now=Date.now();
-    const clock=shotClock(draft.shotClock,draft.planned?.targetSeconds,now);
-    if(clock){
-      const text=(clock.running?Math.floor(clock.elapsed):round(clock.elapsed,1))+' s elapsed';
-      if(elapsed.textContent!==text) elapsed.textContent=text;
-      const remaining=clock.remaining+' s left';
-      if(countdown.textContent!==remaining) countdown.textContent=remaining;
-      if(cue.hidden===clock.reached) cue.hidden=!clock.reached;
-    }
+    const clock=shotClock(draft.shotClock,now);
+    const text=shotClockLabel(clock?.elapsed);
+    if(elapsed.textContent!==text) elapsed.textContent=text;
     const animation=pourAnimation(draft,clock,now);
     const mode=animation?.mode??'';
     if((art.dataset.pourMode??'')!==mode){
@@ -403,15 +396,15 @@ function updateBrewTimer(focus){
   const timer=main.querySelector('[data-brew-timer]');
   const draft=currentPour();
   if(!timer||!draft) return;
-  timer.innerHTML=brewTimer(draft);
+  timer.innerHTML=brewTimerAction(shotClock(draft.shotClock));
   refreshBrewClock();
   main.querySelector(focus)?.focus({preventScroll:true});
 }
 async function finishPour(quickMode){
   const draft=currentPour();
   if(!draft) return;
-  const elapsed=shotClock(draft.shotClock,draft.planned?.targetSeconds)?.elapsed;
-  const timerReading=positive(elapsed,3600)?Math.max(.1,round(elapsed,1)):null;
+  const clock=shotClock(draft.shotClock);
+  const timerReading=clock&&!clock.running&&positive(clock.elapsed,3600)?Math.max(.1,round(clock.elapsed,1)):null;
   if(quickMode){
     directCoach={origin:null,gear:draft.gear,planned:draft.planned,bagId:'',portionId:'',
       screen:timerReading?'confirm-timer':'start',timerReading,actual:emptyActual(),answers:{},undone:false,note:'',savedId:''};
@@ -597,8 +590,8 @@ async function submitForm(node) {
       if(!positive(ratio,10)) throw new Error('The cup target must be no more than ten times the dry dose.');
       const edited=cup!==null&&cup!==targetYield(old.dose,old.ratio)||dose!==old.dose;
       const planned={...old,dose,ratio,timing:'unknown',temperature:numeric(f,'temperature'),...(edited?{basis:'custom'}:{})};
-      const {timer,cue,shotClock:previousClock,decorativeStartedAt,...rest}=draft;
-      await commit({draft:{...rest,step:5,pouring:true,planned,prepChecked:f.getAll('prep'),coachUndo:null,actual:emptyActual()}});
+      const {timer,cue,shotClock:previousClock,...rest}=draft;
+      await commit({draft:{...rest,step:5,pouring:true,decorativeStartedAt:Date.now(),planned,prepChecked:f.getAll('prep'),coachUndo:null,actual:emptyActual()}});
       break;
     }
     case 'brew-yield': {
@@ -609,15 +602,6 @@ async function submitForm(node) {
       if(!positive(grams,500)||!positive(ratio,10)) throw new Error('Enter a cup target up to 500 g and no more than ten times the dose.');
       await updatePour({planned:{...draft.planned,ratio,basis:'custom'},targetEdited:true});
       updateBrewControls('[data-value="brew-yield"]');
-      return;
-    }
-    case 'brew-duration': {
-      const draft=currentPour();
-      if(!draft||draft.shotClock) return;
-      const targetSeconds=numeric(f,'targetSeconds');
-      if(!validTimerTarget(targetSeconds)) throw new Error('Enter a whole number from 1 to 3600 seconds.');
-      await updatePour({planned:{...draft.planned,targetSeconds}});
-      updateBrewTimer('[data-action="start-brew-timer"]');
       return;
     }
     case 'coach-test-result': {
@@ -831,7 +815,7 @@ async function doAction(el){
       break;
     }
     case 'start-quick':
-      quickPouring={gear:{...state.equipment},planned:startingRecipe(state.equipment,null,'Balanced')};
+      quickPouring={gear:{...state.equipment},planned:startingRecipe(state.equipment,null,'Balanced'),decorativeStartedAt:Date.now()};
       render(true);return;
     case 'open-brew-editor': {
       const dialog=main.querySelector(`dialog[data-editor="${key}"]`);
@@ -846,16 +830,9 @@ async function doAction(el){
       return;
     case 'start-brew-timer': {
       const draft=currentPour();
-      if(!draft||draft.shotClock||!validTimerTarget(draft.planned?.targetSeconds)) return;
+      if(!draft||draft.shotClock) return;
       await updatePour({shotClock:{startedAt:Date.now()}});
       updateBrewTimer('[data-action="stop-brew-timer"]');
-      return;
-    }
-    case 'skip-brew-timer': {
-      const draft=currentPour();
-      if(!draft||draft.shotClock||draft.decorativeStartedAt!=null) return;
-      await updatePour({decorativeStartedAt:Date.now()});
-      updateBrewTimer('[data-action="finish-pour"]');
       return;
     }
     case 'stop-brew-timer': {

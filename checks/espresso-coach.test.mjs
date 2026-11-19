@@ -4,7 +4,7 @@ import {evaluateEspresso,coachGear,updateCoachAnswer} from '../dist/espresso-coa
 import {coachScreen,nextBaseline} from '../dist/coach-ui.js';
 import {brewView} from '../dist/ui.js';
 import {quickBrew,bagEdit,home} from '../dist/views.js';
-import {targetYield,shotClock,pourAnimation} from '../dist/core.js';
+import {targetYield,shotClock,shotClockLabel,pourAnimation} from '../dist/core.js';
 
 const gear={machine:'Pump espresso machine',basket:'Single-wall / unpressurized',grinder:'Adjustable espresso grinder',
   scale:'Yes',stop:'Can stop at a chosen yield',temperature:'Adjustable',distribution:'Needle distribution tool'};
@@ -108,7 +108,8 @@ test('guided, saved legacy drafts, and quick entry points use the same pouring v
   }
   for(const markup of [brewView({...draft,step:5,timer:{startedAt:100}},state),brewView({...draft,step:5,pouring:true},state),quickBrew(true)]){
     assert.match(markup,/pour-scene[\s\S]*Ready to taste/);
-    assert.match(markup,/pour-scene[\s\S]*Start timer[\s\S]*Skip timer[\s\S]*mp-cup/);
+    assert.match(markup,/mp-cup[\s\S]*mp-tray[\s\S]*data-elapsed>0:00[\s\S]*Start timer/);
+    assert.doesNotMatch(markup,/Skip timer|Timer duration|Check your yield/);
   }
   assert.match(quickBrew(false),/Start brewing/);
 });
@@ -237,11 +238,14 @@ test('dashboard always offers a fresh shot and continues only unfinished drafts'
   assert.doesNotMatch(home({equipment:{},equipmentSetupSkipped:true}),/Skip for now/);
 });
 
-test('countdown is optional, stops at the recorded elapsed time, and continues past zero',()=>{
-  assert.equal(shotClock(null,30,1000),null);
-  assert.deepEqual(shotClock({startedAt:1000},30,13000),{running:true,elapsed:12,remaining:18,reached:false});
-  assert.deepEqual(shotClock({startedAt:1000,stoppedAt:13000},30,50000),{running:false,elapsed:12,remaining:18,reached:false});
-  assert.deepEqual(shotClock({startedAt:1000},30,33500),{running:true,elapsed:32.5,remaining:0,reached:true});
+test('the optional shot timer counts up past 30 seconds and holds its stopped time',()=>{
+  assert.equal(shotClock(null,1000),null);
+  assert.equal(shotClockLabel(), '0:00');
+  assert.deepEqual(shotClock({startedAt:1000},33500),{running:true,elapsed:32.5});
+  const stopped=shotClock({startedAt:1000,stoppedAt:33500},90000);
+  assert.deepEqual(stopped,{running:false,elapsed:32.5});
+  assert.equal(shotClockLabel(stopped.elapsed),'0:32');
+  assert.equal(shotClockLabel(65.3),'1:05');
 });
 
 test('coach uses a confirmed timer measurement independently of the time and yield targets',()=>{
@@ -254,13 +258,13 @@ test('coach uses a confirmed timer measurement independently of the time and yie
   assert.equal(withoutMeasurement.key,'time');
 });
 
-test('the illustrated stream follows the same timer phase and ends at zero or early stop',()=>{
+test('the illustrated stream follows the same timer phase and continues past 30 seconds and ends when stopped',()=>{
   const draft={decorativeStartedAt:1000};
   assert.equal(pourAnimation({},null,1000),null);
   assert.deepEqual(pourAnimation(draft,null,2250),{mode:'decorative',elapsed:1.25});
   assert.equal(pourAnimation(draft,null,5000),null);
   const clock={startedAt:1000};
-  assert.deepEqual(pourAnimation(draft,shotClock(clock,30,17250),17250),{mode:'timed',elapsed:16.25});
-  assert.equal(pourAnimation(draft,shotClock(clock,30,31000),31000),null);
-  assert.equal(pourAnimation(draft,shotClock({...clock,stoppedAt:3000},30,3200),3200),null);
+  assert.deepEqual(pourAnimation(draft,shotClock(clock,17250),17250),{mode:'timed',elapsed:16.25});
+  assert.deepEqual(pourAnimation(draft,shotClock(clock,38500),38500),{mode:'timed',elapsed:37.5});
+  assert.equal(pourAnimation(draft,shotClock({...clock,stoppedAt:3000},3200),3200),null);
 });
