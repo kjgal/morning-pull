@@ -97,10 +97,10 @@ function prepChecklist(draft,planned,editable=true){
 const go = value => btn(value===1?'Back to beans':'Back','brew-step',value,'ghost');
 const titles=['Choose your beans','Set up your shot','Suggested recipe'];
 
-export function brewView(draft,state,editingEquipment=false,animate=false) {
+export function brewView(draft,state,editingEquipment=false) {
   const {planned}=draft;
   const gear=draft.step===2?state.equipment:draft.gear;
-  if(draft.step===5 && (draft.pouring||draft.timer?.startedAt!=null)) return pourView(draft,animate);
+  if(draft.step===5 && (draft.pouring||draft.timer?.startedAt!=null)) return pourView(draft);
   const step=[4,5].includes(draft.step)?3:draft.step;
   const bag=state.bags.find(b=>b.id===draft.bagId);
   const portion=bag?.portions.find(p=>p.id===draft.portionId);
@@ -150,28 +150,34 @@ export function brewControls(draft){
   const {planned,gear={}}=draft;
   const grams=targetYield(planned?.dose,planned?.ratio);
   const hasTarget=grams!==null&&!isCapsule(gear);
-  const duration=validTimerTarget(planned?.targetSeconds)?planned.targetSeconds:null;
+  return hasTarget?`<div class="row"><p class="pour-target">Target yield · ${measure(grams,'g')}</p>
+    ${btn('Edit target yield','open-brew-editor','brew-yield','ghost')}</div>
+    <p class="small">Target dose · ${measure(planned.dose,'g')} · Brew ratio ${displayRatio(planned.ratio)}</p>
+    ${brewEditor('brew-yield','Edit target yield',number('Target espresso weight (g)','cupTarget',measure(grams),
+      'min=".1" max="500" required'))}`:'';
+}
+export function brewTimer(draft){
+  const duration=validTimerTarget(draft.planned?.targetSeconds)?draft.planned.targetSeconds:null;
   const clock=duration===null?null:shotClock(draft.shotClock,duration);
   const timing=clock?.running?btn('Stop timer','stop-brew-timer','','ghost'):
-    !clock&&duration!==null?btn('Start '+duration+' s timer','start-brew-timer','','ghost'):'';
-  const editTime=!clock?btn(duration===null?'Set timer':'Edit timer','open-brew-editor','brew-duration','ghost'):'';
-  return `${hasTarget?`<div class="row"><p class="pour-target">Target yield · ${measure(grams,'g')}</p>
-    ${btn('Edit target yield','open-brew-editor','brew-yield','ghost')}</div>
-    <p class="small">Target dose · ${measure(planned.dose,'g')} · Brew ratio ${displayRatio(planned.ratio)}</p>` : ''}
-    <div class="actions brew-clock" aria-label="Optional shot timer">${timing}${editTime}
-      ${clock?`<span data-countdown${clock.running?'':' hidden'}></span><span data-elapsed></span>`:''}
+    !clock&&btn('Start timer',duration===null?'open-brew-editor':'start-brew-timer',duration===null?'brew-duration':'','primary');
+  return `<div class="clock-display" aria-label="Optional shot timer">
+    <strong data-countdown${clock&&!clock.running?' hidden':''}>${clock?clock.remaining+' s left':duration===null?'Shot timer':duration+' s'}</strong>
+    ${clock?'<span data-elapsed></span>':''}
+    </div><div class="clock-actions">${timing||''}
+    ${!clock&&duration!==null?btn('Edit timer','open-brew-editor','brew-duration','ghost'):''}
+    ${!clock&&draft.decorativeStartedAt==null?btn('Skip timer','skip-brew-timer','','ghost'):''}
     </div>
-    ${clock?`<p class="small timer-cue" role="status" data-clock-cue hidden>Target time reached. Check the cup.</p>`:''}
-    ${hasTarget?brewEditor('brew-yield','Edit target yield',number('Target espresso weight (g)','cupTarget',measure(grams),
-      'min=".1" max="500" required')):''}
-    ${!clock?brewEditor('brew-duration','Timer duration',input('Target seconds','targetSeconds',duration,
-      'type="number" inputmode="numeric" min="1" max="3600" step="1" required')):''}`;
+    ${clock?`<p class="timer-cue" role="status" data-clock-cue${clock.reached?'':' hidden'}>Check your yield</p>`:
+      brewEditor('brew-duration','Timer duration',input('Target seconds','targetSeconds',duration??30,
+        'type="number" inputmode="numeric" min="1" max="3600" step="1" required'))}`;
 }
-export function pourView(draft,animate=false){
-  return panel(heading('Brewing')+`<div class="pour-scene${animate?' is-pouring':''}" aria-hidden="true">
-    <div class="mp-window"></div><div class="mp-lamp"></div>
+export function pourView(draft){
+  return panel(heading('Brewing')+`<div class="pour-scene">
+    <div class="brew-clock" data-brew-timer>${brewTimer(draft)}</div>
+    <div class="pour-art" aria-hidden="true"><div class="mp-window"></div><div class="mp-lamp"></div>
     <div class="mp-brewer"><div class="mp-backplate"></div><div class="mp-copper"></div><div class="mp-head"></div>
-    <div class="mp-cup-handle"></div><div class="mp-cup"></div><div class="mp-stream"></div><div class="mp-tray"></div></div></div>
+    <div class="mp-cup-handle"></div><div class="mp-cup"></div><div class="mp-stream"></div><div class="mp-tray"></div></div></div></div>
     <div data-brew-controls>${brewControls(draft)}</div>
     ${trialInstructions(draft.test)}
     ${draft.test?`<p class="small" data-edited-target${draft.targetEdited?'':' hidden'}>The target above reflects your edit. The coach’s original suggestion is shown for reference.</p>`:''}

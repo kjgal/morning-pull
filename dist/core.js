@@ -32,6 +32,11 @@ export function shotClock(clock,targetSeconds,now=Date.now()){
   const elapsed=Math.max(0,((running?now:clock.stoppedAt)-clock.startedAt)/1000);
   return {running,elapsed,remaining:Math.max(0,Math.ceil(targetSeconds-elapsed)),reached:elapsed>=targetSeconds};
 }
+export function pourAnimation(draft,clock,now){
+  if(clock) return clock.running&&!clock.reached?{mode:'timed',elapsed:clock.elapsed}:null;
+  const elapsed=Math.max(0,(now-draft.decorativeStartedAt)/1000);
+  return elapsed<4?{mode:'decorative',elapsed}:null;
+}
 export const extraction = (dose,yieldG,tds) => positive(tds,100) && ratioOf(dose,yieldG) !== null ? tds * ratioOf(dose,yieldG) : null;
 export const scaleItems = (items, multiplier) => positive(multiplier) ? items.map(item => item.amount==null?item:{...item, amount:item.amount * multiplier}) : [];
 

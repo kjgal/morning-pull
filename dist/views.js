@@ -121,8 +121,8 @@ export function compareView(shots) {
   return heading('Compare shots')+(mixed?'<p class="note">Timing conventions differ or are unknown. Compare the times only when both shots were timed the same way.</p>':'')+
    `<div class="compare">${shots.map(s=>panel(`<p><a href="#shot/${e(s.id)}">${e(shotTitle(s))}</a></p>${shotBody(s)}<p class="small">Next step: ${e(s.advice.title)}</p>`)).join('')}</div>`+actions(link('Back to history','history','ghost'));
 }
-export function quickBrew(pouring,animate=false) {
-  if(pouring) return pourView(pouring,animate);
+export function quickBrew(pouring) {
+  if(pouring) return pourView(pouring);
   return panel(heading('Quick brew')+actions(btn('Start brewing','start-quick','','primary')));
 }
 export function calculator() {

@@ -4,7 +4,7 @@ import {evaluateEspresso,coachGear,updateCoachAnswer} from '../dist/espresso-coa
 import {coachScreen,nextBaseline} from '../dist/coach-ui.js';
 import {brewView} from '../dist/ui.js';
 import {quickBrew,bagEdit,home} from '../dist/views.js';
-import {targetYield,shotClock} from '../dist/core.js';
+import {targetYield,shotClock,pourAnimation} from '../dist/core.js';
 
 const gear={machine:'Pump espresso machine',basket:'Single-wall / unpressurized',grinder:'Adjustable espresso grinder',
   scale:'Yes',stop:'Can stop at a chosen yield',temperature:'Adjustable',distribution:'Needle distribution tool'};
@@ -108,7 +108,7 @@ test('guided, saved legacy drafts, and quick entry points use the same pouring v
   }
   for(const markup of [brewView({...draft,step:5,timer:{startedAt:100}},state),brewView({...draft,step:5,pouring:true},state),quickBrew(true)]){
     assert.match(markup,/pour-scene[\s\S]*Ready to taste/);
-    assert.doesNotMatch(markup,/Shot time|Elapsed time|cue-status|Record results/);
+    assert.match(markup,/pour-scene[\s\S]*Start timer[\s\S]*Skip timer[\s\S]*mp-cup/);
   }
   assert.match(quickBrew(false),/Start brewing/);
 });
@@ -252,4 +252,15 @@ test('coach uses a confirmed timer measurement independently of the time and yie
   assert.match(outcome.body,/48 s versus 29 s/);
   const withoutMeasurement=shot('Sour','Fast',{actual:{...actual,seconds:48},previous});
   assert.equal(withoutMeasurement.key,'time');
+});
+
+test('the illustrated stream follows the same timer phase and ends at zero or early stop',()=>{
+  const draft={decorativeStartedAt:1000};
+  assert.equal(pourAnimation({},null,1000),null);
+  assert.deepEqual(pourAnimation(draft,null,2250),{mode:'decorative',elapsed:1.25});
+  assert.equal(pourAnimation(draft,null,5000),null);
+  const clock={startedAt:1000};
+  assert.deepEqual(pourAnimation(draft,shotClock(clock,30,17250),17250),{mode:'timed',elapsed:16.25});
+  assert.equal(pourAnimation(draft,shotClock(clock,30,31000),31000),null);
+  assert.equal(pourAnimation(draft,shotClock({...clock,stoppedAt:3000},30,3200),3200),null);
 });
