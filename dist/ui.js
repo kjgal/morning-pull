@@ -143,8 +143,9 @@ export function brewView(draft,state,editingEquipment=false) {
       ${previous.change?`<p class="small">Changed: ${e(previous.change)}</p>`:''}${link('View attempt','shot/'+previous.id,'ghost')}`):''}</aside></div>`;
 }
 function brewEditor(key,title,field){
-  return `<dialog class="brew-editor" data-editor="${key}" aria-labelledby="${key}-title">
-    <h2 id="${key}-title">${title}</h2>${form(key,field+actions(submit('Save')+btn('Cancel','close-brew-editor','','ghost')))}</dialog>`;
+  return `<dialog class="cafe-dialog brew-editor" data-editor="${key}" aria-labelledby="${key}-title">
+    <div class="cafe-dialog-header"><h2 id="${key}-title">${title}</h2></div>
+    <div class="dialog-body">${form(key,field+actions(submit('Save')+btn('Cancel','close-brew-editor','','ghost')))}</div></dialog>`;
 }
 export function brewControls(draft){
   const {planned,gear={}}=draft;
