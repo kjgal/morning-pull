@@ -1,5 +1,5 @@
 import {selection} from './selection.js';
-import {EQUIPMENT,TIMING,TASTES,FLOWS,age,round,ratioOf,targetYield,extraction,isCapsule,prepSteps,recipeReason,positive,validTimerTarget,shotClock} from './core.js';
+import {EQUIPMENT,TIMING,TASTES,FLOWS,age,round,ratioOf,targetYield,extraction,isCapsule,prepSteps,recipeReason,positive,shotClock,shotClockLabel} from './core.js';
 export const e = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const eq = (value,other) => value === other ? ' selected' : '';
 export const checked = value => value ? ' checked' : '';
@@ -69,7 +69,6 @@ export const ageLine = (bag,on) => {
 };
 export function planDisplay(plan,gear) {
   const items=[['Target dose',measure(plan.dose,'g')],['Target yield',measure(targetYield(plan.dose,plan.ratio),'g')],['Brew ratio',isCapsule(gear)?'—':displayRatio(plan.ratio)]];
-  if(validTimerTarget(plan.targetSeconds)) items.push(['Target time',measure(plan.targetSeconds,'s')]);
   if(plan.temperature!==null) items.push(['Temperature',measure(plan.temperature,'°C')]);
   if(plan.preInfusion!==null) items.push(['Pre-infusion',measure(plan.preInfusion,'s')]);
   return metric(items);
@@ -157,28 +156,19 @@ export function brewControls(draft){
     ${brewEditor('brew-yield','Edit target yield',number('Target espresso weight (g)','cupTarget',measure(grams),
       'min=".1" max="500" required'))}`:'';
 }
-export function brewTimer(draft){
-  const duration=validTimerTarget(draft.planned?.targetSeconds)?draft.planned.targetSeconds:null;
-  const clock=duration===null?null:shotClock(draft.shotClock,duration);
-  const timing=clock?.running?btn('Stop timer','stop-brew-timer','','ghost'):
-    !clock&&btn('Start timer',duration===null?'open-brew-editor':'start-brew-timer',duration===null?'brew-duration':'','primary');
-  return `<div class="clock-display" aria-label="Optional shot timer">
-    <strong data-countdown${clock&&!clock.running?' hidden':''}>${clock?clock.remaining+' s left':duration===null?'Shot timer':duration+' s'}</strong>
-    ${clock?'<span data-elapsed></span>':''}
-    </div><div class="clock-actions">${timing||''}
-    ${!clock&&duration!==null?btn('Edit timer','open-brew-editor','brew-duration','ghost'):''}
-    ${!clock&&draft.decorativeStartedAt==null?btn('Skip timer','skip-brew-timer','','ghost'):''}
-    </div>
-    ${clock?`<p class="timer-cue" role="status" data-clock-cue${clock.reached?'':' hidden'}>Check your yield</p>`:
-      brewEditor('brew-duration','Timer duration',input('Target seconds','targetSeconds',duration??30,
-        'type="number" inputmode="numeric" min="1" max="3600" step="1" required'))}`;
+export function brewTimerAction(clock){
+  if(clock?.running) return btn('Stop timer','stop-brew-timer');
+  return clock?'':btn('Start timer','start-brew-timer');
 }
 export function pourView(draft){
+  const clock=shotClock(draft.shotClock);
   return panel(heading('Brewing')+`<div class="pour-scene">
-    <div class="brew-clock" data-brew-timer>${brewTimer(draft)}</div>
-    <div class="pour-art" aria-hidden="true"><div class="mp-window"></div><div class="mp-lamp"></div>
-    <div class="mp-brewer"><div class="mp-backplate"></div><div class="mp-copper"></div><div class="mp-head"></div>
-    <div class="mp-cup-handle"></div><div class="mp-cup"></div><div class="mp-stream"></div><div class="mp-tray"></div></div></div></div>
+    <div class="pour-art"><div class="mp-window" aria-hidden="true"></div><div class="mp-lamp" aria-hidden="true"></div>
+    <div class="mp-brewer"><div class="mp-backplate" aria-hidden="true"></div><div class="mp-copper" aria-hidden="true"></div><div class="mp-head" aria-hidden="true"></div>
+    <div class="mp-cup-handle" aria-hidden="true"></div><div class="mp-cup" aria-hidden="true"></div><div class="mp-stream" aria-hidden="true"></div>
+    <div class="mp-tray"><span class="mp-scale-display" role="timer" aria-label="Shot elapsed time" data-elapsed>${shotClockLabel(clock?.elapsed)}</span></div>
+    </div></div></div>
+    <div class="scale-action" data-brew-timer>${brewTimerAction(clock)}</div>
     <div data-brew-controls>${brewControls(draft)}</div>
     ${trialInstructions(draft.test)}
     ${draft.test?`<p class="small" data-edited-target${draft.targetEdited?'':' hidden'}>The target above reflects your edit. The coach’s original suggestion is shown for reference.</p>`:''}
