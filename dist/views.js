@@ -1,6 +1,6 @@
 import {TIMING,round,TASTES,FLOWS} from './core.js';
 import {SYRUPS,STORAGE_GUIDANCE,PANTRY,FLAVORS,MILKS,drinks,matchImportedRecipe} from './recipes.js';
-import {e,heading,btn,link,submit,actions,fields,panel,form,input,number,textarea,select,checks,details,bagName,measure,displayRatio,ageLine,gearForm,hasEquipment,equipmentSummary,resultDisplay,planDisplay,tasteFields,measurementFields,advicePanel,pourView} from './ui.js';
+import {e,heading,btn,link,submit,actions,fields,panel,form,input,number,textarea,select,checks,details,bagName,measure,displayRatio,ageLine,gearForm,equipmentSetupForm,hasEquipment,unfinishedShot,equipmentSummary,resultDisplay,planDisplay,tasteFields,measurementFields,advicePanel,pourView} from './ui.js';
 
 import {offlineMessages} from './offline.js';
 import {APP_VERSION} from './version.js';
@@ -10,7 +10,7 @@ export const methods = ['Unknown','Original bag','Sealed container','Vacuum seal
 export const defaultDrink = {temp:'Iced',milk:'Oat milk',diet:'Any milk',sweet:'Light',strength:'Regular',pantry:['espresso','water','ice'],otherSyrup:''};
 export const freshTaste = () => ({tastes:[],flows:[],rating:null,note:'',detail:'',change:''});
 
-export function home(state) {
+export function home(state,continueCoach=false) {
   const tiles=[
     ['Quick brew','Start a pour without the recipe walkthrough.','timer'],
     ['Troubleshoot','Find one thing to try on the next shot.','coach'],
@@ -19,8 +19,19 @@ export function home(state) {
     ['Shot history','Compare attempts or repeat a favorite.','history'],
     ['Café recipes','Make syrups and drinks with what you have.','recipes']
   ];
-  return `<section class="hero"><div class="hero-art" aria-hidden="true"><img src="./cafe.webp" width="1440" height="576" alt=""></div><div class="hero-content"><p class="kicker">Your home espresso coach</p><h1>Dial in your next shot.</h1><p>Choose a recipe for your beans, pull a shot, and figure out what to try next.</p>${actions(link(state.draft && state.draft.step<8?'Continue your shot':'Pull a shot','brew','primary'))}</div></section>
+  return `<section class="hero"><div class="hero-art" aria-hidden="true"><img src="./cafe.webp" width="1440" height="576" alt=""></div><div class="hero-content"><p class="kicker">Your home espresso coach</p><h1>Dial in your next shot.</h1><p>Choose a recipe for your beans, pull a shot, and figure out what to try next.</p>${actions(btn('Start a new shot','new-shot','','primary')+
+    (unfinishedShot(state.draft)||continueCoach?link('Continue current shot',unfinishedShot(state.draft)?'brew':'coach','ghost'):'')+
+    link('My equipment','equipment','ghost'))}</div></section>
+  ${!hasEquipment(state.equipment??{})&&!state.equipmentSetupSkipped?panel(`<h2>Set up your equipment</h2>
+    <p class="small">Tell the coach what you use and what you can adjust.</p>${actions(link('Set up equipment','equipment','primary')+
+    btn('Skip for now','skip-equipment','','ghost'))}`,'section-gap'):''}
   <div class="tiles section-gap">${tiles.map(([name,desc,route])=>`<a class="panel" href="#${route}"><strong>${name}</strong><span class="small">${desc}</span></a>`).join('')}</div>`;
+}
+export function equipmentView(gear,returnPage){
+  const back=returnPage==='brew'?'brew':'home';
+  return panel(heading('My equipment','Answer what you know so the coach can suggest changes that fit your setup.')+
+    form('gear',equipmentSetupForm(gear)+actions(submit('Save equipment')+
+      (hasEquipment(gear)||back==='brew'?link('Cancel',back,'ghost'):btn('Skip for now','skip-equipment','','ghost')))));
 }
 export function beansView(state,showArchived=false) {
   const bags=state.bags.filter(b=>b.archived===showArchived);
@@ -110,8 +121,8 @@ export function compareView(shots) {
   return heading('Compare shots')+(mixed?'<p class="note">Timing conventions differ or are unknown. Compare the times only when both shots were timed the same way.</p>':'')+
    `<div class="compare">${shots.map(s=>panel(`<p><a href="#shot/${e(s.id)}">${e(shotTitle(s))}</a></p>${shotBody(s)}<p class="small">Next step: ${e(s.advice.title)}</p>`)).join('')}</div>`+actions(link('Back to history','history','ghost'));
 }
-export function quickBrew(pouring) {
-  if(pouring) return pourView({});
+export function quickBrew(pouring,animate=false) {
+  if(pouring) return pourView({},animate);
   return panel(heading('Quick brew')+actions(btn('Start brewing','start-quick','','primary')));
 }
 export function calculator() {

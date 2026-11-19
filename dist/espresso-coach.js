@@ -111,7 +111,8 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
     kind,title,because,change,keep,watch,why,sources,patch,summary,fact,timeFact
   });
   const diagnostic=(title,because,change,watch,sources,report='',keep='')=>({
-    ...result('diagnostic',title,because,change,keep,'',watch,sources),report
+    ...result('diagnostic',title,because,change,keep,'',watch,sources),report,
+    test:['yield','dose','flow','even','unevenSource'].includes(report)
   });
   const uneven=flow==='Uneven'||answers.even==='no';
   const dual=manual(gear)&&gear.basket==='Dual-wall / pressurized';
@@ -264,7 +265,7 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
 
   if(taste==='Too intense') return diagnostic('Check whether it’s the strength','The cup tasted too intense to you.',
     'Add a small splash of warm water to half a sip and compare it with the undiluted espresso.',
-    'If the diluted sip tastes balanced, the strength may be what bothered you. If a sour or bitter taste remains, that flavor gives the coach a better clue.', ['taste'],'taste');
+    'If the diluted sip tastes balanced, the strength may be what bothered you. If a sour or bitter taste remains, that flavor gives you a better clue.', ['taste']);
 
   if(flow==='Steady' && (sour||harsh) && manual(gear)){
     if(!answers.warm) return ask('warm','Had your machine warmed up according to its manual?',options.yesNo);
@@ -287,12 +288,17 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
     }
   }
 
-  if(taste==='Other' && bag && (bag.opened||portion?.thawed||bag.method)){
+  if(taste==='Other'){
     if(!answers.aroma) return ask('aroma','Do the dry beans also smell flat or stale?',options.yesNo);
     if(answers.aroma==='yes') return diagnostic('Compare the beans before changing the recipe',
       portion?.thawed?'The beans smell flat and this portion has been thawed.':'The dry beans smell flat too.',
       'If you have another portion of the same coffee that was stored separately, smell it beside this one.',
-      'If the aromas differ clearly, compare portions before changing the recipe. If they smell alike, check whether the shot’s flow or measured yield changed.', ['beans'],'aroma');
+      'If the aromas differ clearly, compare portions before changing the recipe. If they smell alike, check whether the shot’s flow or measured yield changed.', ['beans']);
+    return diagnostic('Try a fully warmed-up shot',
+      answers.aroma==='no'?'The cup tasted flat, but the dry coffee smelled normal.':'The dry coffee’s aroma didn’t give us a clear clue.',
+      'Warm up the machine as its manual recommends before brewing another cup.',
+      'A consistent warm-up gives you a way to check whether starting temperature contributed to the muted flavor.',
+      ['heat'],'flow','Keep the same beans and recipe.');
   }
 
   if(flow==='unknown') return diagnostic('Check the stream on your next shot','You weren’t sure how it flowed.',
@@ -304,10 +310,17 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
   if(flow==='Steady'&&canWeigh&&!positive(actual.yieldG,500)) return diagnostic('Weigh the next cup','You saw a steady pour without a measured yield.',
     'Place a scale under the cup and record the espresso weight when you stop.',
     'A measured yield and dose let the coach separate a cup-target change from a grind or warm-up check.', ['taste','dial'],'yield','Keep the dose and grind the same.');
-  if(quickOrSlow&&presetMachine) return diagnostic('Compare at your usual preset','That machine controls some or all of the pour.',
-    'Taste the espresso by itself and note whether it’s thin, sharp, or bitter.',
-    'The preset and basket can shape the stream. The taste tells us whether to explore strength or another cause.',
-    ['machine','taste'],'taste');
+  if(quickOrSlow&&presetMachine){
+    if(sour||weak) return diagnostic('Try the espresso setting',
+      sour?'The shot rushed out and tasted sharp. At a preset, pour speed alone gives limited information about the grind.':
+        'The shot rushed out and tasted thin. A longer preset can dilute the coffee.',
+      'If your machine offers a shorter espresso setting, use it for the next cup.',
+      'A shorter preset uses less water. Taste the next cup to see whether the extra concentration suits this coffee.',
+      ['machine','taste'],'flow','Keep the same coffee and other machine settings.');
+    return diagnostic('Compare at your usual preset','The machine’s preset shapes the pour speed.',
+      'Brew with your usual espresso preset and watch whether the stream is steady or sputters.',
+      'An uneven pour can point to a different issue than a fast but steady stream.', ['machine','taste'],'flow');
+  }
   if(quickOrSlow&&answers.even==='yes'&&canWeigh&&ratio===null) return diagnostic('Weigh the next cup',
     'The stream looked even, but we don’t know how much espresso reached the cup from that dose.',
     'Weigh the dry grounds and the espresso in the cup on your next pull.',
@@ -316,7 +329,7 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
   if(quickOrSlow&&answers.even==='yes'&&manual(gear)&&!canGrind) return diagnostic('Check the coffee’s grind suitability',
     'The stream looked even, and this setup doesn’t support a confident grinder adjustment.',
     'Check whether your coffee is ground for the basket your machine recommends.',
-    'If it is, compare the taste at a consistent dose before changing the cup target.', ['machine','taste'],'taste',
+    'If it is, compare the taste at a consistent dose before changing the cup target.', ['machine','taste'],'flow',
     'Use the same basket and brew setting for now.');
   if(quickOrSlow) return diagnostic('Check whether the pour stays even',
     answers.grinder==='unknown'||answers.basket==='unknown'||answers.machine==='unknown'
@@ -324,12 +337,8 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
     'Watch whether the stream comes out evenly or sputters and sprays.',
     'An uneven stream points to how water is moving through the coffee. A steady stream makes the flavor a better guide for the next change.',
     ['bed','taste'],'even','Keep the same coffee and machine settings for this check.');
-  if(taste==='Other') return diagnostic('Compare the aroma of the dry coffee','Your espresso tasted flat or muted.',
-    'Smell the dry coffee before you brew next time.',
-    'If the dry coffee also smells flat, comparing how the beans were stored is more useful than changing grind.',
-    ['beans'],'aroma');
   return diagnostic('Pin down what tastes off','The observations so far could fit several causes.',
     'Take another sip as the espresso cools a little. Notice whether it seems sharp, dries your mouth, or just tastes lighter than you like.',
     'Those tastes lead to different checks. A thin cup can be a strength problem, while a sharp or drying finish may need a different adjustment.',
-    ['taste'],'taste');
+    ['taste'],'flow');
 }

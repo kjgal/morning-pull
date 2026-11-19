@@ -17,7 +17,7 @@ export const EQUIPMENT = {
   distribution: ['Not sure', 'Needle distribution tool', 'Other tool', 'None']
 };
 
-export const emptyState = () => ({version:1,bags:[],shots:[],recipes:[],equipment:{},preferences:{sound:false,vibrate:false,wake:false},draft:null,updatedAt:null});
+export const emptyState = () => ({version:1,bags:[],shots:[],recipes:[],equipment:{},equipmentSetupSkipped:false,preferences:{sound:false,vibrate:false,wake:false},draft:null,updatedAt:null});
 export const id = () => globalThis.crypto.randomUUID();
 export const round = (n, digits = 2) => Number(n.toFixed(digits));
 export const positive = (n, max = Infinity) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= max;

@@ -171,9 +171,13 @@ input[type=checkbox]:checked::after{visibility:visible}
 .mp-stream{
  position:absolute;top:57%;bottom:33%;z-index:3;left:50%;width:5px;transform:translateX(-50%);
  background:repeating-linear-gradient(0deg,#c17d4f 0 5px,#e5a161 5px 8px,#9e583d 8px 12px);
+ visibility:hidden;
+}
+.is-pouring .mp-stream{
+ visibility:visible;
  animation:mp-flow-motion .5s steps(6,end) 8,mp-stop-flow 4s steps(1,end) forwards;
 }
-.mp-stream::after{
+.is-pouring .mp-stream::after{
  content:"";position:absolute;bottom:0;left:-3px;width:11px;height:2px;background:#e5a161;
  animation:mp-ripple-motion .5s steps(2,end) 8 alternate;
 }
