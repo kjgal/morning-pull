@@ -1,4 +1,4 @@
-import { TIMING } from './core.js';
+import { TIMING, measuredShotTime } from './core.js';
 import { diagnosticQuestions, equipmentQuestions, openings } from './espresso-coach.js';
 import { actions, bagName, btn, e, fields, form, heading, link, number, panel, select, shotNavigation, submit } from './ui.js';
 
@@ -20,7 +20,10 @@ export function coachScreen(session,state,bag,outcome,direct){
   const context=bag?`<p class="small">${e(bagName(bag))}</p>`:'';
   const back=session.trail?.length?actions(btn('Back','coach-back','','ghost')):'';
   let body;
-  if(screen==='test-result'){
+  if(screen==='confirm-timer'){
+    body=heading('Confirm shot time',`The timer measured ${session.timerReading} s. Use it if you started and stopped timing with your machine.`)+
+      actions(btn(`Use ${session.timerReading} s`,'confirm-shot-time','use','primary')+btn('Skip time','confirm-shot-time','skip','ghost'));
+  }else if(screen==='test-result'){
     const canMeasure=session.gear.scale==='Yes'||['yield','dose'].includes(session.origin.test.report);
     body=heading('Report what happened','Record what you noticed about this test shot.')+
       form('coach-test-result',fields(
@@ -46,7 +49,7 @@ export function coachScreen(session,state,bag,outcome,direct){
       unevenSource:'Where it sputtered',equipmentIssue:'Plain-water flow'};
     const items=[['taste','Taste'],['flow','Pour'],...Object.entries(extra).filter(([key])=>session.answers[key]),
       ['yield','Measured yield'],['dose','Measured dose'],
-      ...(actual.timeSource==='manual'?[['time','Independently measured time']]:[]),...(direct?[['context','Coffee']]:[])];
+      ...(measuredShotTime(actual)?[['time','Independently measured time']]:[]),...(direct?[['context','Coffee']]:[])];
     body=heading('Edit answers')+`<div class="stack">${items.map(([key,label])=>btn(label,'coach-edit-item',key,'ghost')).join('')}</div>`;
   }else if(screen==='edit-context'){
     body=heading('Which coffee did you use?')+form('coach-context',select('Bean bag','bagId',session.bagId,

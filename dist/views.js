@@ -122,7 +122,7 @@ export function compareView(shots) {
    `<div class="compare">${shots.map(s=>panel(`<p><a href="#shot/${e(s.id)}">${e(shotTitle(s))}</a></p>${shotBody(s)}<p class="small">Next step: ${e(s.advice.title)}</p>`)).join('')}</div>`+actions(link('Back to history','history','ghost'));
 }
 export function quickBrew(pouring,animate=false) {
-  if(pouring) return pourView({},animate);
+  if(pouring) return pourView(pouring,animate);
   return panel(heading('Quick brew')+actions(btn('Start brewing','start-quick','','primary')));
 }
 export function calculator() {

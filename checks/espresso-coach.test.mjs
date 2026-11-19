@@ -4,7 +4,7 @@ import {evaluateEspresso,coachGear,updateCoachAnswer} from '../dist/espresso-coa
 import {coachScreen,nextBaseline} from '../dist/coach-ui.js';
 import {brewView} from '../dist/ui.js';
 import {quickBrew,bagEdit,home} from '../dist/views.js';
-import {targetYield} from '../dist/core.js';
+import {targetYield,shotClock} from '../dist/core.js';
 
 const gear={machine:'Pump espresso machine',basket:'Single-wall / unpressurized',grinder:'Adjustable espresso grinder',
   scale:'Yes',stop:'Can stop at a chosen yield',temperature:'Adjustable',distribution:'Needle distribution tool'};
@@ -217,7 +217,8 @@ test('weighing the next cup carries instructions into brewing before showing a f
   const test={title:advice.title,instruction:advice.change,keep:advice.keep,report:advice.report};
   const recipe={gear,planned,test};
   for(const markup of [brewView({...recipe,step:3},state),brewView({...recipe,step:5,pouring:true},state)]){
-    assert.match(markup,/Weigh the next cup[\s\S]*Place a scale under the cup[\s\S]*36 g/);
+    assert.match(markup,/Weigh the next cup[\s\S]*Place a scale under the cup/);
+    assert.match(markup,/36 g/);
     assert.doesNotMatch(markup,/Report what happened|Sources|Elapsed time/);
   }
   const report=coachScreen({origin:recipe,screen:'test-result',actual:{},gear,answers:{}},state,null,null,false);
@@ -234,4 +235,21 @@ test('dashboard always offers a fresh shot and continues only unfinished drafts'
     assert.match(markup,/Skip for now/);
   }
   assert.doesNotMatch(home({equipment:{},equipmentSetupSkipped:true}),/Skip for now/);
+});
+
+test('countdown is optional, stops at the recorded elapsed time, and continues past zero',()=>{
+  assert.equal(shotClock(null,30,1000),null);
+  assert.deepEqual(shotClock({startedAt:1000},30,13000),{running:true,elapsed:12,remaining:18,reached:false});
+  assert.deepEqual(shotClock({startedAt:1000,stoppedAt:13000},30,50000),{running:false,elapsed:12,remaining:18,reached:false});
+  assert.deepEqual(shotClock({startedAt:1000},30,33500),{running:true,elapsed:32.5,remaining:0,reached:true});
+});
+
+test('coach uses a confirmed timer measurement independently of the time and yield targets',()=>{
+  const previous={actual:{...actual,timeSource:'timer'},gear,planned};
+  const timed={...actual,seconds:48,timeSource:'timer'};
+  const outcome=shot('Sour','Fast',{actual:timed,previous,planned:{...planned,targetSeconds:30,ratio:1.8}});
+  assert.equal(outcome.key,'interruption');
+  assert.match(outcome.body,/48 s versus 29 s/);
+  const withoutMeasurement=shot('Sour','Fast',{actual:{...actual,seconds:48},previous});
+  assert.equal(withoutMeasurement.key,'time');
 });

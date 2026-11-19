@@ -114,3 +114,18 @@ test('service worker precaches core and serves the navigation fallback without i
   events.fetch({request:{method:'GET',mode:'navigate',url:scope},respondWith:p=>{outcome=p;}});
   assert.equal(await outcome,scope);
 });
+
+test('puck prep follows the selected machine routine, current dose, and tools',()=>{
+  const gear={machine:'Pump espresso machine',scale:'Yes',distribution:'Needle distribution tool',tamper:'Yes'};
+  assert.deepEqual(prepSteps(gear,{dose:20}),[
+    ['warmup','Warm up the machine','Let your machine reach brewing temperature.'],
+    ['dose','Weigh 20 g of coffee.'],
+    ['wdt','Use your WDT needle tool to break up clumps.'],
+    ['tamp','Tamp level.']
+  ]);
+  assert.equal(prepSteps({...gear,warmup:'Warming flush recommended'},{dose:19})[0][2],
+    'Run a warming flush before adding coffee.');
+  assert.equal(prepSteps(gear,{dose:19})[1][1],'Weigh 19 g of coffee.');
+  assert.deepEqual(prepSteps({...gear,machine:'Automatic / bean-to-cup'}).map(([key])=>key),['warmup','load']);
+  assert.equal(startingRecipe(gear,null,'Balanced').dose,18);
+});

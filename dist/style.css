@@ -224,3 +224,20 @@ input[type=checkbox]:checked::after{visibility:visible}
 .photo-picker:focus-within{outline:3px solid var(--mint);outline-offset:3px}
 .photo-picker input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
 .ingredient-review{grid-column:1/-1;margin:0}
+
+.prep-list{min-width:0;margin-block:14px}
+.prep-list label{
+ display:flex;align-items:flex-start;gap:8px;min-width:0;min-height:44px;
+ padding:9px 6px;border-bottom:1px solid var(--border);overflow-wrap:anywhere;cursor:pointer
+}
+.prep-list input{margin-top:3px}
+.prep-list span{min-width:0}
+.prep-list small{display:block}
+.brew-clock{margin-block:8px 14px;font-variant-numeric:tabular-nums}
+.brew-clock [data-countdown]{color:var(--accent);font-weight:700}
+.timer-cue{border-left:3px solid var(--mint);padding-left:9px;color:var(--mint)}
+.brew-editor{
+ width:min(420px,calc(100% - 24px));max-height:calc(100% - 24px);overflow:auto;
+ background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:18px
+}
+.brew-editor::backdrop{background:#160f20b5}

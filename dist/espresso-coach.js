@@ -1,4 +1,4 @@
-import { ratioOf, round, positive } from './core.js';
+import { ratioOf, round, positive, measuredShotTime } from './core.js';
 
 const manual = gear => ['Pump espresso machine','Manual lever'].includes(gear.machine) &&
   ['Single-wall / unpressurized','Dual-wall / pressurized'].includes(gear.basket);
@@ -75,7 +75,7 @@ export function coachGear(gear={},answers={}){
   const next={...gear};
   const changedMachine=gear.machine&&gear.machine!=='Not sure'&&answers.machine&&answers.machine!=='unknown'&&answers.machine!==gear.machine;
   if(changedMachine){
-    for(const key of ['basket','ratedDose','stop','temperature','infusion','timer','tamper','distribution']) delete next[key];
+    for(const key of ['basket','ratedDose','stop','temperature','infusion','timer','tamper','distribution','warmup']) delete next[key];
   }
   if(next.basket&&next.basket!=='Not sure'&&answers.basket&&answers.basket!=='unknown'&&answers.basket!==next.basket) delete next.ratedDose;
   for(const key of Object.keys(equipmentQuestions)){
@@ -97,8 +97,8 @@ export function evaluateEspresso({gear={},planned={},actual={},answers={},bag,po
   const canStop=manual(gear)&&gear.stop==='Can stop at a chosen yield';
   const canGrind=single(gear) && gear.grinder==='Adjustable espresso grinder';
   const previousSeconds=previous?.actual?.seconds;
-  const currentSeconds=actual.timeSource==='manual'?actual.seconds:null;
-  const comparableShot=previous?.actual?.timeSource==='manual' && previous.actual.timing!=='unknown' &&
+  const currentSeconds=measuredShotTime(actual)?actual.seconds:null;
+  const comparableShot=measuredShotTime(previous?.actual) && previous.actual.timing!=='unknown' &&
     previous.gear?.machine===gear.machine && previous.gear?.basket===gear.basket && previous.gear?.grinder===gear.grinder &&
     previous.planned?.preInfusion===planned.preInfusion && ratio!==null &&
     positive(previous.actual.dose,60)&&positive(previous.actual.yieldG,500)&&Math.abs(actual.dose-previous.actual.dose)<=1&&

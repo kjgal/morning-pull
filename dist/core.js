@@ -9,6 +9,7 @@ export const EQUIPMENT = {
   grinder: ['Not sure', 'Adjustable espresso grinder', 'Fixed or limited grinder', 'Pre-ground coffee', 'Built-in or automated'],
   basket: ['Not sure', 'Single-wall / unpressurized', 'Dual-wall / pressurized', 'Built-in basket', 'Capsule'],
   scale: ['Not sure', 'Yes', 'No'],
+  warmup: ['Not sure', 'Warming flush recommended', 'No warming flush recommended'],
   timer: ['Not sure', 'Use app timer', 'Machine or separate timer', 'No'],
   stop: ['Not sure', 'Can stop at a chosen yield', 'Preset or automatic only'],
   temperature: ['Not sure', 'Adjustable', 'Fixed'],
@@ -23,6 +24,14 @@ export const round = (n, digits = 2) => Number(n.toFixed(digits));
 export const positive = (n, max = Infinity) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= max;
 export const ratioOf = (dose,yieldG) => positive(dose) && positive(yieldG) ? yieldG / dose : null;
 export const targetYield = (dose,ratio) => positive(dose) && positive(ratio) ? dose * ratio : null;
+export const validTimerTarget = seconds => Number.isInteger(seconds) && positive(seconds,3600);
+export const measuredShotTime = actual => ['manual','timer'].includes(actual?.timeSource);
+export function shotClock(clock,targetSeconds,now=Date.now()){
+  if(!Number.isFinite(clock?.startedAt)) return null;
+  const running=clock.stoppedAt==null;
+  const elapsed=Math.max(0,((running?now:clock.stoppedAt)-clock.startedAt)/1000);
+  return {running,elapsed,remaining:Math.max(0,Math.ceil(targetSeconds-elapsed)),reached:elapsed>=targetSeconds};
+}
 export const extraction = (dose,yieldG,tds) => positive(tds,100) && ratioOf(dose,yieldG) !== null ? tds * ratioOf(dose,yieldG) : null;
 export const scaleItems = (items, multiplier) => positive(multiplier) ? items.map(item => item.amount==null?item:{...item, amount:item.amount * multiplier}) : [];
 
@@ -57,8 +66,9 @@ export const isCapsule = gear => gear.machine === 'Capsule machine' || gear.bask
 export const hasPuck = gear => !isCapsule(gear) && gear.machine !== 'Automatic / bean-to-cup' && gear.basket !== 'Built-in basket';
 
 export function startingRecipe(gear,bag,goal,savedShots=[],portionId='') {
-  const dose = !isCapsule(gear) && positive(gear.ratedDose,60) ? gear.ratedDose : null;
-  const matching = dose!==null && bag?.id && goal==='Balanced' && savedShots.find(shot=>
+  const dose = !isCapsule(gear) && positive(gear.ratedDose,60) ? gear.ratedDose :
+    hasPuck(gear) && ['Pump espresso machine','Manual lever'].includes(gear.machine) ? 18 : null;
+  const matching = positive(gear.ratedDose,60) && dose!==null && bag?.id && goal==='Balanced' && savedShots.find(shot=>
     shot.bagId===bag.id && (shot.portionId??'')===portionId &&
     gear.machine && gear.machine!=='Not sure' && gear.basket && gear.basket!=='Not sure' &&
     ['machine','basket','grinder'].every(key=>gear[key]===shot.gear?.[key]) &&
@@ -80,15 +90,18 @@ export function recipeReason(plan) {
     custom:'This target comes from the recipe settings you entered.'
   })[plan.basis]??'This target was saved in your draft. You can replan it or edit the cup target.';
 }
-export function prepSteps(gear) {
-  if (isCapsule(gear)) return ['Use a compatible capsule and follow your machine’s instructions.','Set a cup in place and choose a brew size your machine supports.'];
-  if (!hasPuck(gear)) return ['Load the coffee as directed by your machine.','Choose an available shot size and place a cup under the outlet.'];
-  return [
-    'Start with a clean, dry basket. Use a dose that fits the basket’s rated range.',
-    gear.scale === 'Yes' ? 'Weigh the dry grounds before brewing.' : 'Use the same dose routine each time. Leave measurements blank when you cannot measure them.',
-    gear.distribution === 'Needle distribution tool' ? 'Use your needle tool to break up clumps and level the grounds.' : 'Spread the grounds evenly across the basket before tamping.',
-    gear.tamper === 'No or automatic' ? 'Follow your machine or basket instructions for compacting the grounds.' : 'If your basket calls for a tamp, tamp level and keep your routine consistent.'
-  ];
+export function prepSteps(gear,plan={}){
+  const warmup=gear.warmup==='Warming flush recommended'?'Run a warming flush before adding coffee.':'Let your machine reach brewing temperature.';
+  const steps=[['warmup','Warm up the machine',warmup]];
+  if(isCapsule(gear)) return [...steps,['capsule','Use a compatible capsule.']];
+  if(!hasPuck(gear)) return [...steps,['load','Load coffee as directed by your machine.']];
+  if(gear.scale!=='No'){
+    const grams=positive(plan.dose,60)?round(plan.dose)+' g of coffee':'your coffee';
+    steps.push(['dose',gear.scale==='Yes'?'Weigh '+grams+'.':'Weigh '+grams+' if you have a scale.']);
+  }
+  if(gear.distribution==='Needle distribution tool') steps.push(['wdt','Use your WDT needle tool to break up clumps.']);
+  if(gear.tamper==='Yes') steps.push(['tamp','Tamp level.']);
+  return steps;
 }
 export const TASTES = ['Balanced','Sour','Bitter','Dry','Weak','Too intense','Other'];
 export const FLOWS = ['Steady','Fast','Slow','Uneven','Spraying','Choked','Inconsistent','Not sure'];
