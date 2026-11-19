@@ -1,4 +1,5 @@
 import {enableSelection} from './selection.js';
+import {createConfirmation} from './confirmation.js';
 import { coachGear, equipmentQuestions, evaluateEspresso, openings, updateCoachAnswer } from './espresso-coach.js';
 import { coachScreen, followQuestions, nextBaseline } from './coach-ui.js';
 import {chatCapability,shotContext,sendChat} from './chat.js';
@@ -16,6 +17,7 @@ const install = document.getElementById('install');
 const nav = document.getElementById('nav');
 const choices = [['Dashboard','home'],['Brew','brew'],['Beans','beans'],['History','history'],['Recipes','recipes']];
 const unavailable = '<p>That item may have been removed.</p>';
+const confirmAction=createConfirmation();
 const emptyActual = () => ({dose:null,yieldG:null,seconds:null,tds:null,timing:'unknown'});
 const clean = (fields,key) => String(fields.get(key) ?? '').trim();
 const numeric = (fields,key) => {
@@ -41,7 +43,6 @@ try {
   if(!MILK_PREFERENCES.includes(drinkOptions.milk)) drinkOptions.milk='No preference';
   if(drinkOptions.diet==='Dairy-free'&&MILK_PREFERENCES.indexOf(drinkOptions.milk)>=2) drinkOptions.milk=milkFor(drinkOptions.milk,drinkOptions.diet);
 } catch {}
-let restoreCandidate=null;
 let selection=new Set();
 let photoDraft=null;
 let photoRequest=0;
@@ -149,7 +150,6 @@ function render(focus=false) {
     }
     photoDraft=null;
     ocrDraft=null;
-    restoreCandidate=null;
     lastRoute=routeKey;
   }
   nav.innerHTML=choices.map(([label,address])=>`<a href="#${address}"${navGroup(home)===address?' aria-current="page"':''}>${label}</a>`).join('');
@@ -439,11 +439,15 @@ async function saveCoachResult(session){
   if(savedDraft) session.origin=state.draft;
   session.savedId=entry.id;
 }
-async function useCoachRecipe(session){
+async function useCoachRecipe(session,opener){
   const advice=coachOutcome(session);
   if(advice.kind==='question') return;
   if(!session.origin && unfinishedShot(state.draft) &&
-      !window.confirm('Use this recipe in place of the unfinished walkthrough?')) return;
+      !await confirmAction(opener,{
+        heading:'Replace unfinished shot?',
+        description:'Using this recipe discards your unfinished shot.',
+        cancelLabel:'Keep current shot',actionLabel:'Use this recipe'
+      })) return;
   const baseline=nextBaseline(session.planned);
   const draft=newDraft();
   const patch=session.undone?null:advice.patch;
@@ -797,16 +801,18 @@ async function submitForm(node) {
       if(!file?.size || file.size>100000000) throw new Error('Choose a backup file under 100 MB.');
       let data;
       try { data=JSON.parse(await file.text()); } catch { throw new Error('This file is not valid backup JSON.'); }
-      restoreCandidate=importData(data);
-      const preview=document.createElement('div');
-      preview.id='restore-preview';
-      const r=restoreCandidate;
-      preview.innerHTML=`<p>Replace your journal with ${r.bags.length} bags, ${r.shots.length} shots and ${r.recipes.length} recipes?</p>
-      <button class="primary" type="button" data-action="confirm-restore">Restore backup</button>
-      <button type="button" data-action="cancel-restore">Cancel restore</button>`;
-      node.querySelector('#restore-preview')?.remove();
-      node.append(preview);
-      preview.querySelector('button').focus();
+      const backup=importData(data);
+      if(!await confirmAction(node.querySelector('button[type="submit"]'),{
+        heading:'Restore this backup?',
+        description:`This replaces your current journal with ${backup.bags.length} bags, ${backup.shots.length} shots and ${backup.recipes.length} recipes.`,
+        cancelLabel:'Keep current journal',actionLabel:'Restore backup'
+      })) return;
+      await commit(backup);
+      selection.clear();
+      directCoach=null;
+      brewCoach=null;
+      toast('Backup restored.');
+      render();
       return;
     }
     default:return;
@@ -939,10 +945,14 @@ async function doAction(el){
     case 'coach-report': case 'coach-edit-item':
       editCoachItem(activeSession(),key);await finishCoachStep();return;
     case 'coach-save': await saveCoachResult(activeSession());await finishCoachStep();return;
-    case 'coach-try': await useCoachRecipe(activeSession());return;
+    case 'coach-try': await useCoachRecipe(activeSession(),el);return;
     case 'new-shot': case 'repeat': {
       if((unfinishedShot(stateDraft)||unfinishedCoach()||quickPouring) &&
-        !window.confirm('Start a new shot? Your unfinished attempt will be discarded.')) return;
+        !await confirmAction(el,{
+          heading:'Start a new shot?',
+          description:'Starting over discards this unfinished shot. Your saved beans and equipment stay available.',
+          cancelLabel:'Keep current shot',actionLabel:'Discard and start new'
+        })) return;
       const coffee=route()[0]==='coach'?activeSession():stateDraft;
       await commit({draft:newDraft(getShot(key),coffee)});
       directCoach=null;
@@ -956,7 +966,11 @@ async function doAction(el){
       break;
     }
     case 'delete-bag': {
-      if(!window.confirm('Delete this bag and its label photo? Existing shots will keep their recorded bean details.')) return;
+      if(!await confirmAction(el,{
+        heading:'Delete this bean bag?',
+        description:'The bag and its label photo will be deleted. Existing shots keep their recorded bean details.',
+        cancelLabel:'Keep bean bag',actionLabel:'Delete bean bag'
+      })) return;
       await commit({bags:state.bags.filter(b=>b.id!==key),
         shots:state.shots.map(s=>s.bagId===key?{...s,bagId:'',portionId:'',updatedAt:new Date().toISOString()}:s),
         draft:stateDraft?.bagId===key?{...stateDraft,bagId:'',portionId:''}:stateDraft});
@@ -968,7 +982,11 @@ async function doAction(el){
       await commit({shots:state.shots.map(s=>s.id===key?{...s,favorite:!s.favorite,updatedAt:new Date().toISOString()}:s)});
       break;
     case 'delete-shot': {
-      if(!window.confirm('Delete this shot from your history?')) return;
+      if(!await confirmAction(el,{
+        heading:'Delete this shot?',
+        description:'This shot will be removed from your history.',
+        cancelLabel:'Keep shot',actionLabel:'Delete shot'
+      })) return;
       selection.delete(key);
       await commit({shots:state.shots.filter(s=>s.id!==key).map(s=>s.parentId===key?{...s,parentId:'',updatedAt:new Date().toISOString()}:s),
         draft:stateDraft?.parentId===key?{...stateDraft,parentId:''}:stateDraft});
@@ -1005,7 +1023,11 @@ async function doAction(el){
       return;
     }
     case 'delete-recipe':
-      if(!window.confirm('Delete this saved recipe?')) return;
+      if(!await confirmAction(el,{
+        heading:'Delete this recipe?',
+        description:'This recipe will be removed from your saved recipes and favorites.',
+        cancelLabel:'Keep recipe',actionLabel:'Delete recipe'
+      })) return;
       await commit({recipes:state.recipes.filter(r=>r.id!==key)});
       jump('recipes');
       return;
@@ -1045,20 +1067,6 @@ async function doAction(el){
       return;
     }
     case 'export': exportBackup(); return;
-    case 'confirm-restore':
-      if(!restoreCandidate) return;
-      await commit(restoreCandidate);
-      restoreCandidate=null;
-      selection.clear();
-      directCoach=null;
-      brewCoach=null;
-      toast('Backup restored.');
-      break;
-    case 'cancel-restore':
-      restoreCandidate=null;
-      el.closest('#restore-preview').remove();
-      main.querySelector('[data-form="import"] button').focus();
-      return;
     default:return;
   }
   render();

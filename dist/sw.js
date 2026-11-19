@@ -1,7 +1,7 @@
-const VERSION = 'morning-pull-0.1.0-test.5';
+const VERSION = 'morning-pull-0.1.0-test.6';
 const OCR_CACHE = VERSION+'-ocr';
 const CORE = [
-  './','./offline.js','./version.js','./style.css','./app.js','./core.js','./storage.js','./ui.js','./views.js','./recipes.js','./recipe-import.js','./chat.js','./espresso-coach.js','./coach-ui.js','./selection.js',
+  './','./offline.js','./version.js','./style.css','./app.js','./core.js','./storage.js','./ui.js','./views.js','./recipes.js','./recipe-import.js','./chat.js','./espresso-coach.js','./coach-ui.js','./selection.js','./confirmation.js',
   './app.webmanifest','./icon-192.png','./icon-512.png','./cafe.webp','./fonts/pixel.woff2','./fonts/dm.woff2'
 ];
 const scope=new URL(self.registration.scope);

@@ -15,9 +15,9 @@ export function selection(label,name,value,choices,attrs='') {
 export function enableSelection(scope){
   const panel=document.createElement('dialog');
   panel.id='selection-panel';
-  panel.className='selection-panel';
+  panel.className='cafe-dialog selection-panel';
   panel.setAttribute('aria-labelledby','selection-title');
-  panel.innerHTML='<div class="selection-header"><h2 id="selection-title"></h2><button type="button" class="ghost">Close</button></div><ul class="selection-options" role="listbox" aria-labelledby="selection-title"></ul>';
+  panel.innerHTML='<div class="cafe-dialog-header"><h2 id="selection-title"></h2><button type="button" class="ghost">Close</button></div><ul class="selection-options" role="listbox" aria-labelledby="selection-title"></ul>';
   document.body.append(panel);
   const title=panel.querySelector('h2');
   const dismiss=panel.querySelector('button');
